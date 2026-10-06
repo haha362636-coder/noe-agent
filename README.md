@@ -7,7 +7,7 @@
 **把各种 AI 编程助手装进一个聊天软件：一键安装、多厂商 API 管理、私聊任意 AI，或把多个 AI 拖进群里，@ 谁就谁来干活。**
 
 ![版本](https://img.shields.io/badge/version-0.2.0--beta.3-orange)
-![平台](https://img.shields.io/badge/platform-macOS%20(Apple%20%2F%20Intel)-lightgrey)
+![平台](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -34,6 +34,29 @@ xattr -cr "/Applications/Noe Agent.app"
 
 然后正常双击打开即可。系统要求 macOS 12 及以上；内置终端需要系统自带的 `python3`（没有的话 macOS 会提示安装命令行工具）。
 
+## 下载安装（Windows）
+
+> [!NOTE]
+> Windows 版是刚推出的测试版，比 Mac 版更早期，遇到问题欢迎到 [Issues](https://github.com/haha362636-coder/noe-agent/issues) 反馈（附上截图和 Windows 版本）。
+
+到 [Releases](https://github.com/haha362636-coder/noe-agent/releases) 下载：
+
+| 文件 | 说明 |
+|---|---|
+| `Noe-Agent-<版本>-win-x64-setup.exe` | 安装版（推荐），会创建桌面和开始菜单快捷方式 |
+| `Noe-Agent-<版本>-win-x64.zip` | 免安装版，解压后双击 `Noe Agent.exe` |
+
+**1. 先装好两个依赖**（Noe Agent 用 npm 安装各个 AI 工具）：
+
+- [Node.js](https://nodejs.org)（选 LTS 版，一路「下一步」）
+- [Git for Windows](https://git-scm.com/download/win)（Claude Code 在 Windows 上需要它自带的 Git Bash）
+
+**2. 安装 Noe Agent**：双击 `setup.exe`。安装包没有代码签名，如果弹出「Windows 已保护你的电脑」，点 **更多信息** → **仍要运行**（只有第一次需要）。
+
+**3. 打开使用**：从桌面或开始菜单打开 Noe Agent，到「AI 工具」页一键安装 Claude Code 等。
+
+系统要求 Windows 10（1809 及以上）或 Windows 11，64 位；ARM 版 Windows 也可以通过系统自带的转译运行。和 Mac 版的区别：快捷键用 `Ctrl`（如 `Ctrl+K`、`Ctrl+J`），内置终端默认 PowerShell，数据保存在 `C:\Users\你的用户名\.noe-agent`。
+
 ## 功能
 
 - **AI 工具**：Claude Code、Codex、DeepSeek Harness、Gemini CLI、Qwen Code、OpenCode 一键安装 / 更新 / 卸载，显示官方账号登录状态；支持接入任意自定义 CLI。
@@ -44,7 +67,7 @@ xattr -cr "/Applications/Noe Agent.app"
 - **时光机**：每条 AI 回复都会记录改了哪些文件，可以看差异、一键撤销 / 恢复，对所有 AI 通用（快照独立保存，不影响项目自己的 Git）。
 - **工作目录**：新会话先选项目文件夹，AI 做出来的文件就在你知道的地方；回复里的文件链接一点就用默认程序打开。
 - **/ 命令**：`/help /login /logout /use /model /effort /status /terminal /shell /new /clear /stop /cwd /invite /kick /rename`；需要交互界面的命令（如 Claude 的 `/config`、`/mcp`）自动在内置终端打开。
-- **内置终端**：真实伪终端，用于官方账号登录、交互式命令和续接会话（⌘J）。
+- **内置终端**：真实伪终端，用于官方账号登录、交互式命令和续接会话（Mac ⌘J / Windows Ctrl+J）。
 - **MCP 服务器**：20 个常用 MCP 预设（文件系统、Context7、GitHub、Playwright、Chrome DevTools、Tavily、高德地图、Notion 等），一键装进多个 AI 工具；已安装矩阵可同步或移除；支持自定义和粘贴 JSON 导入。
 - **插件**：Claude Code 插件市场（300+ 插件）、Codex 插件、Gemini CLI 扩展，一键安装 / 启用 / 卸载。
 
@@ -66,7 +89,10 @@ npm run web      # 或只启动本地服务，浏览器打开 http://127.0.0.1:1
 npm run dist:mac         # 同时打 Apple 芯片和 Intel 两个 dmg，输出到 dist/
 npm run dist:mac-arm64   # 只打 Apple 芯片
 npm run dist:mac-x64     # 只打 Intel
+npm run dist:win         # 在 Mac 上打 Windows 版（安装版 .exe + 免安装 .zip），输出到 release-win/
 ```
+
+Windows 版和 Mac 版用同一份代码，打包输出放在不同文件夹，互不影响。
 
 发布到 GitHub 的完整步骤见 [docs/发布到GitHub教程.md](docs/发布到GitHub教程.md)。
 
@@ -80,7 +106,7 @@ server/providers.js   模型厂商预设、连通性测试、模型列表
 server/models.js      模型目录、思考强度、/model 模糊匹配
 server/extensions.js  MCP 与插件：读写各 CLI 的配置、调用官方命令
 server/mcp-catalog.js 推荐 MCP、Gemini 扩展、Claude 插件市场
-server/pty.js         内置终端；pty_bridge.py 提供伪终端
+server/pty.js         内置终端；Mac 用 pty_bridge.py，Windows 用 ConPTY（node-pty）
 server/snapshots.js   时光机：用独立的影子 Git 仓库给工作目录拍快照、对比、撤销
 server/store.js       数据保存在 ~/.noe-agent/data.json（仅本机，权限 600）
 public/               界面（原生 HTML / CSS / JS）
@@ -90,7 +116,7 @@ build/                应用图标
 
 ## 注意事项
 
-- API Key 只保存在本机 `~/.noe-agent/data.json`，不会上传到任何地方。
+- API Key 只保存在本机 `~/.noe-agent/data.json`（Windows 为 `C:\Users\你的用户名\.noe-agent\data.json`），不会上传到任何地方。
 - MCP 写入位置：Claude Code 用 `claude mcp add-json -s user`，Codex 用 `codex mcp add`，Gemini / Qwen / OpenCode 直接修改各自的配置文件（首次修改前会备份为 `*.noe-backup`）。
 - Codex 使用第三方厂商时，厂商需要兼容 OpenAI Responses 接口（`/v1/responses`）。
 - 设置里的「全自动模式」会跳过 CLI 的所有权限确认，请只在可信目录中使用。
