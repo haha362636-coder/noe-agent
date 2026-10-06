@@ -170,17 +170,19 @@ function addMessage(chatId, m) {
   return msg;
 }
 
-// 解析 @：支持 @id、@名称（忽略大小写和空格）、@all / @所有人
+// 解析 @：支持 @id、@名称（忽略大小写，名称中的空格可省略）、@all / @所有人
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function parseMentions(text, chat, exclude) {
   const members = chat.members.map(getAgent).filter(Boolean);
-  const lower = text.toLowerCase().replace(/\s+/g, '');
+  const lower = text.toLowerCase();
   const hits = [];
-  const all = /@(all|所有人|全体)/i.test(text);
+  const all = /@(all|所有人|全体)(?![a-z0-9_-])/i.test(text);
   for (const a of members) {
-    const aliases = [a.id, a.name.toLowerCase().replace(/\s+/g, ''), a.bin];
+    // 名称里的空格允许省略或保留：@claude code、@claudecode 都能匹配
+    const aliases = [reEsc(a.id), reEsc(a.bin.toLowerCase()), a.name.toLowerCase().trim().split(/\s+/).map(reEsc).join('\\s*')];
     let pos = all ? 0 : Infinity;
     for (const al of aliases) {
-      const m = new RegExp('@' + al.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z0-9_-])').exec(lower);
+      const m = new RegExp('@' + al + '(?![a-z0-9_-])').exec(lower);
       if (m) pos = Math.min(pos, m.index);
     }
     if (pos !== Infinity && a.id !== exclude) hits.push([pos, a.id]);
@@ -214,13 +216,57 @@ function buildPrompt(chat, agent, trigger) {
 }
 function clipText(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 
-const running = new Map(); // msgId -> { proc, chatId }
+const running = new Map(); // msgId -> { proc, chatId }（排队中的任务 proc 为 null）
+const lanes = new Map();   // `${chatId}:${agentId}` -> 该成员在该会话里最后一个任务的 Promise
+const alive = (chatId, msg) => msgs(chatId).includes(msg) && db.chats.some((c) => c.id === chatId);
+const chatBusy = (chatId) => [...running.values()].some((r) => r.chatId === chatId);
 
+/**
+ * 同一个会话里同一个 AI 的任务排队执行：同时续接同一个 CLI 会话会互相覆盖上下文，
+ * 所以上一条还在跑时，新消息先显示“排队中”，轮到它再启动。
+ */
 async function dispatch(chat, agentId, trigger, depth, { raw } = {}) {
   const agent = getAgent(agentId);
   if (!agent) return;
-  const reply = addMessage(chat.id, { sender: agent.id, text: '', status: 'streaming', replyTo: trigger.id, meta: { provider: activeProvider(agent.id)?.name || '官方登录' } });
+  const key = `${chat.id}:${agent.id}`;
+  const prev = lanes.get(key);
+  const reply = addMessage(chat.id, { sender: agent.id, text: '', status: 'streaming', ...(prev ? { queued: true } : {}), replyTo: trigger.id, meta: { provider: activeProvider(agent.id)?.name || '官方登录' } });
+  running.set(reply.id, { proc: null, chatId: chat.id });
   broadcast('chats.busy', { chatId: chat.id, busy: true });
+  let release;
+  const mine = new Promise((r) => (release = r));
+  lanes.set(key, mine);
+  try {
+    if (prev) await prev;
+    await runReply(chat, agent, reply, trigger, { raw });
+  } finally {
+    release();
+    if (lanes.get(key) === mine) lanes.delete(key);
+  }
+  // 接力：AI 在回复里 @ 了其他成员（放在排队之外，避免 A→B→A 互相等待）
+  if (chat.type === 'group' && reply.status === 'done' && reply.text && depth < (db.settings.maxChain ?? 3) && alive(chat.id, reply)) {
+    const next = parseMentions(reply.text, chat, agent.id);
+    await Promise.all(next.map((id) => dispatch(chat, id, reply, depth + 1)));
+  }
+}
+
+async function runReply(chat, agent, reply, trigger, { raw } = {}) {
+  const finish = () => {
+    running.delete(reply.id);
+    if (!alive(chat.id, reply)) return false; // 会话被删除 / 清空，或这条消息被删了
+    store.save();
+    broadcast('message.update', reply);
+    broadcast('chats.busy', { chatId: chat.id, busy: chatBusy(chat.id) });
+    return true;
+  };
+  // 排队期间被停止或删除
+  if (!running.has(reply.id) || !alive(chat.id, reply)) {
+    reply.status = 'stopped'; delete reply.queued;
+    finish();
+    return;
+  }
+  if (reply.queued) { delete reply.queued; broadcast('message.update', reply); }
+
   const sessions = (chat.sessions ||= {});
   const prompt = raw ? trigger.text : buildPrompt(chat, agent, trigger);
   const exec = (sessionId) => runAgent(agent, {
@@ -245,15 +291,12 @@ async function dispatch(chat, agentId, trigger, depth, { raw } = {}) {
     result = await done;
   }
   const wasStopped = !running.has(reply.id) || result.stopped;
-  running.delete(reply.id);
 
   reply.text = (result.text || reply.text || '').trim();
   reply.meta = result.meta;
   reply.status = wasStopped ? 'stopped' : result.error ? 'error' : 'done';
   if (result.error && !wasStopped && result.error.trim() !== reply.text) reply.error = result.error;
-  store.save();
-  broadcast('message.update', reply);
-  broadcast('chats.busy', { chatId: chat.id, busy: [...running.values()].some((r) => r.chatId === chat.id) });
+  if (!finish()) return;
 
   const errText = `${reply.error || ''}\n${reply.text}`;
   // 交互式命令在无头模式下不可用：自动转到内置终端
@@ -262,12 +305,6 @@ async function dispatch(chat, agentId, trigger, depth, { raw } = {}) {
     addMessage(chat.id, { sender: 'system', text: `${trigger.text} 需要交互界面，已在内置终端中打开`, term: t.id });
   } else if (/not logged in|please run \/login|invalid api key|authentication|认证失败|401/i.test(errText) && reply.status === 'error') {
     addMessage(chat.id, { sender: 'system', text: `${agent.name} 认证失败。输入 /login @${agent.id} 登录官方账号，或 /use <厂商名> @${agent.id} 改用 API 厂商。`, actions: [{ label: '立即登录', cmd: `/login @${agent.id}` }, { label: '配置厂商', goto: 'providers' }] });
-  }
-
-  // 接力：AI 在回复里 @ 了其他成员
-  if (chat.type === 'group' && reply.status === 'done' && reply.text && depth < (db.settings.maxChain ?? 3)) {
-    const next = parseMentions(reply.text, chat, agent.id);
-    await Promise.all(next.map((id) => dispatch(chat, id, reply, depth + 1)));
   }
 }
 
@@ -286,7 +323,13 @@ async function onUserMessage(chat, text) {
 }
 
 function stopChat(chatId) {
-  for (const [id, r] of running) if (r.chatId === chatId) { running.delete(id); try { r.proc.kill('SIGTERM'); } catch { /* 已退出 */ } }
+  for (const [id, r] of running) if (r.chatId === chatId) { running.delete(id); try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ } }
+}
+function stopMessage(msgId) {
+  const r = running.get(msgId); if (!r) return false;
+  running.delete(msgId);
+  try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ }
+  return true;
 }
 
 // ---------- / 命令 ----------
@@ -510,10 +553,15 @@ function send(res, code, body) {
   res.end(JSON.stringify(body));
 }
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let s = '';
-    req.on('data', (c) => (s += c));
+    req.setEncoding('utf8');
+    req.on('data', (c) => {
+      s += c;
+      if (s.length > 10e6) { reject(httpErr(413, '请求内容过大')); req.destroy(); }
+    });
     req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { resolve({}); } });
+    req.on('error', reject);
   });
 }
 function httpErr(code, message) { return Object.assign(new Error(message), { code }); }
@@ -521,11 +569,18 @@ function httpErr(code, message) { return Object.assign(new Error(message), { cod
 const routes = [];
 const route = (method, pattern, fn) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), fn });
 
+// 会话列表只需要最后一条消息的预览，不带执行步骤，减小 /api/state 的体积
+function brief(m) {
+  if (!m) return null;
+  const { steps, ...rest } = m;
+  return { ...rest, text: clipText(m.text || '', 300) };
+}
+
 route('GET', '/api/state', async () => ({
   agents: allAgents().map(publicAgent), settings: db.settings,
   providers: db.providers.map(publicProvider), presets: PRESETS, protocols: PROTOCOLS, commands: COMMANDS,
   terms: pty.list(), home: os.homedir(), version: VERSION,
-  chats: db.chats.map((c) => ({ ...c, last: msgs(c.id).at(-1) || null, count: msgs(c.id).length, busy: [...running.values()].some((r) => r.chatId === c.id) })),
+  chats: db.chats.map((c) => ({ ...c, last: brief(msgs(c.id).at(-1)), count: msgs(c.id).length, busy: chatBusy(c.id) })),
 }));
 
 // agents
@@ -632,7 +687,15 @@ route('POST', '/api/providers/:id/models', async ({ id }) => {
 
 // settings
 route('PUT', '/api/settings', async (_, b) => {
-  for (const k of ['workspace', 'maxChain', 'autoApprove', 'historyLimit', 'notify', 'askCwd']) if (b[k] !== undefined) db.settings[k] = b[k];
+  const num = (v, min, max, def) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
+  if (b.workspace !== undefined) {
+    // 空值或相对路径会让工作目录落到 App 自己的目录里，统一转成绝对路径
+    const ws = expandHome(b.workspace);
+    db.settings.workspace = ws ? path.resolve(os.homedir(), ws) : store.defaults().settings.workspace;
+  }
+  if (b.maxChain !== undefined) db.settings.maxChain = num(b.maxChain, 0, 10, 3);
+  if (b.historyLimit !== undefined) db.settings.historyLimit = num(b.historyLimit, 0, 100, 20);
+  for (const k of ['autoApprove', 'notify', 'askCwd']) if (b[k] !== undefined) db.settings[k] = !!b[k];
   store.save(); return db.settings;
 });
 
@@ -689,7 +752,46 @@ route('DELETE', '/api/chats/:id/messages/:mid', async ({ id, mid }) => {
   broadcast('message.deleted', { chatId: id, id: mid });
   return { ok: true };
 });
-route('POST', '/api/chats/:id/stop', async ({ id }) => { stopChat(id); return { ok: true }; });
+route('POST', '/api/chats/:id/stop', async ({ id }, b) => {
+  if (b.messageId) return { ok: stopMessage(b.messageId) };
+  stopChat(id); return { ok: true };
+});
+// 导出聊天记录为 Markdown
+route('GET', '/api/chats/:id/export', async ({ id }) => {
+  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const ts = (t) => new Date(t).toLocaleString('zh-CN', { hour12: false });
+  const lines = [`# ${chat.type === 'group' ? chat.name : getAgent(chat.members[0])?.name || chat.name}`, '',
+    `- 导出时间：${ts(Date.now())}`, `- 工作目录：\`${chatCwd(chat)}\``,
+    ...(chat.type === 'group' ? [`- 成员：${chat.members.map((m) => getAgent(m)?.name || m).join('、')}`] : []), ''];
+  for (const m of msgs(id)) {
+    if (m.status === 'streaming') continue;
+    if (m.sender === 'system') { lines.push(`> ${String(m.text || '').replace(/\n/g, '\n> ')}`, ''); continue; }
+    const meta = m.meta?.model ? ` · ${m.meta.model}` : '';
+    lines.push(`## ${senderName(m)}${m.sender === 'user' ? '' : meta} · ${ts(m.ts)}`, '');
+    if (m.text) lines.push(m.text, '');
+    if (m.error) lines.push('```text', m.error, '```', '');
+    if (m.status === 'stopped') lines.push('_（已停止）_', '');
+  }
+  return { name: `${(chat.type === 'group' ? chat.name : chat.members[0]).replace(/[\\/:*?"<>|]/g, '_')}-${new Date().toLocaleDateString('sv')}.md`, markdown: lines.join('\n') };
+});
+// 搜索所有会话里的消息
+route('GET', '/api/search', async (_p, _b, url) => {
+  const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+  if (!q) return { results: [] };
+  const results = [];
+  for (const chat of db.chats) {
+    const list = msgs(chat.id);
+    for (let i = list.length - 1; i >= 0 && results.length < 50; i--) {
+      const m = list[i];
+      const text = String(m.text || '');
+      const at = text.toLowerCase().indexOf(q);
+      if (at < 0 || m.sender === 'system') continue;
+      const from = Math.max(0, at - 30);
+      results.push({ chatId: chat.id, id: m.id, sender: m.sender, ts: m.ts, snippet: (from ? '…' : '') + text.slice(from, at + q.length + 60).replace(/\s+/g, ' ') });
+    }
+  }
+  return { results: results.sort((a, b) => b.ts - a.ts).slice(0, 50) };
+});
 route('POST', '/api/chats/:id/open-folder', async ({ id }) => {
   const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
   spawn(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [chatCwd(chat)]);
@@ -742,7 +844,7 @@ route('POST', '/api/chats/:id/shell', async ({ id }) => {
 // terminals
 route('GET', '/api/terms/:id/buffer', async ({ id }) => {
   const t = pty.get(id); if (!t) throw httpErr(404, '终端不存在');
-  return { buffer: t.buffer, exited: t.exited };
+  return { buffer: t.buffer.slice(-200000), exited: t.exited };
 });
 route('POST', '/api/terms/:id/input', async ({ id }, b) => { pty.write(id, String(b.data || '')); return { ok: true }; });
 route('POST', '/api/terms/:id/resize', async ({ id }, b) => { pty.resize(id, b.cols, b.rows); return { ok: true }; });
@@ -872,8 +974,24 @@ route('POST', '/api/ext/plugins/:agent/configure', async ({ agent }, b) => {
   return { term: t.id };
 });
 
+// 只接受来自本机页面的请求：
+// - Host 必须是 127.0.0.1 / localhost（防 DNS 重绑定）
+// - 带 Origin 的请求必须同源；写操作必须是 application/json（浏览器跨站发不出这种“简单请求”，会被预检拦下）
+// 否则任意网页都能悄悄调用本地接口，让 AI 执行命令或安装自定义 CLI。
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+function trusted(req) {
+  const host = req.headers.host || '';
+  if (!LOCAL_HOST.test(host)) return false;
+  const origin = req.headers.origin;
+  if (origin && !LOCAL_HOST.test(origin.replace(/^https?:\/\//i, ''))) return false;
+  if (!['GET', 'HEAD'].includes(req.method) && !/^application\/json/i.test(req.headers['content-type'] || '')) return false;
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://x');
+  let url;
+  try { url = new URL(req.url, 'http://x'); } catch { res.writeHead(400); return res.end(); }
+  if (url.pathname.startsWith('/api/') && !trusted(req)) return send(res, 403, { error: 'forbidden' });
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(': hi\n\n');
@@ -895,8 +1013,11 @@ const server = http.createServer(async (req, res) => {
     }
     return send(res, 404, { error: 'not found' });
   }
-  const file = path.normalize(path.join(PUBLIC, url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname)));
-  if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
+  if (!LOCAL_HOST.test(req.headers.host || '')) { res.writeHead(403); return res.end(); }
+  let rel;
+  try { rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
+  const file = path.normalize(path.join(PUBLIC, rel));
+  if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, buf) => {
     if (err) { res.writeHead(404); return res.end('not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
@@ -917,7 +1038,7 @@ function start(port = Number(process.env.PORT) || 17860) {
 }
 
 function shutdown() {
-  for (const r of running.values()) try { r.proc.kill('SIGTERM'); } catch { /* 已退出 */ }
+  for (const r of running.values()) try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ }
   pty.closeAll();
   store.flush();
 }

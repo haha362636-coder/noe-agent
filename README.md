@@ -6,7 +6,7 @@
 
 **把各种 AI 编程助手装进一个聊天软件：一键安装、多厂商 API 管理、私聊任意 AI，或把多个 AI 拖进群里，@ 谁就谁来干活。**
 
-![版本](https://img.shields.io/badge/version-0.2.0--beta.1-orange)
+![版本](https://img.shields.io/badge/version-0.2.0--beta.2-orange)
 ![平台](https://img.shields.io/badge/platform-macOS%20(Apple%20%2F%20Intel)-lightgrey)
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 

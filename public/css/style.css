@@ -185,7 +185,9 @@ code { font-size: .9em; }
 .day-sep { display: flex; justify-content: center; margin: 18px 0 10px; }
 .day-sep span { font-size: 11.5px; color: var(--faint); padding: 2px 10px; border-radius: 999px; background: var(--line-2); }
 
-.msg { display: flex; gap: 12px; margin-top: 18px; max-width: 920px; margin-left: auto; margin-right: auto; animation: rise .22s ease-out; }
+.msg { display: flex; gap: 12px; margin-top: 18px; max-width: 920px; margin-left: auto; margin-right: auto; }
+/* 只给新到的消息做入场动画；流式更新会替换元素，若每次都播放动画消息会一直闪 */
+.msg.enter { animation: rise .22s ease-out; }
 .msg.compact { margin-top: 6px; }
 .msg .avatar-space { width: 34px; flex-shrink: 0; }
 .msg .body { min-width: 0; flex: 1; }
@@ -816,3 +818,25 @@ form.market.add { margin-top: 12px; }
 .about-row { display: flex; gap: 14px; padding: 9px 2px; font-size: 13px; border-top: 1px solid var(--line-2); }
 .about-row b { width: 64px; flex-shrink: 0; color: var(--muted); font-weight: 500; }
 .about-row a { color: var(--accent-text); }
+
+/* 正在生成的回复：停止按钮常驻 */
+.msg .msg-actions.live { opacity: 1; min-height: 0; }
+.msg .msg-actions.live .act { opacity: .7; }
+.msg .msg-actions.live .act:hover { opacity: 1; color: var(--danger); }
+.msg.streaming .msg-actions:not(.live) { display: none; }
+
+/* 长会话：加载更早的消息 */
+.load-more { display: flex; align-items: center; gap: 6px; margin: 4px auto 12px; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; cursor: pointer; }
+.load-more:hover { color: inherit; border-color: var(--accent); }
+
+/* 从搜索结果跳转过来的消息短暂高亮 */
+.msg.flash > .body { animation: msg-flash 1.8s ease-out; border-radius: 12px; }
+@keyframes msg-flash { 0%, 40% { background: var(--active); box-shadow: 0 0 0 6px var(--active); } 100% { background: transparent; box-shadow: 0 0 0 6px transparent; } }
+
+/* ⌘K 聊天记录搜索结果 */
+.qs-sec { font-size: 11.5px; color: var(--muted); padding: 10px 10px 4px; font-weight: 600; }
+.qs-item.msg { align-items: flex-start; flex-wrap: wrap; }
+.qs-item.msg > span:not(.qs-ic) { flex: 1; min-width: 0; }
+.qs-item.msg small { flex-basis: 100%; margin-left: 38px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-item mark { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.qs-ic { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); flex: none; }

@@ -48,7 +48,13 @@ function previewText(m) {
 }
 
 // ================= 打开会话 =================
-export async function openChat(id) {
+// 每个会话各自的输入草稿，切换会话不丢
+const drafts = new Map();
+function saveDraft() { const t = $('#input'); if (S.chatId && t) drafts.set(S.chatId, t.value); }
+
+/** opts.focus：打开后滚动到并高亮某条消息（来自搜索） */
+export async function openChat(id, { focus } = {}) {
+  saveDraft(); // 同一会话重绘（如切换工作目录后）也要保留输入框内容
   S.chatId = id;
   // 加载期间到达的实时事件会被丢弃，所以加载完若有新事件就再取一次
   S.chatLoading = id; S.chatDirty = false;
@@ -57,16 +63,25 @@ export async function openChat(id) {
   S.chatLoading = null;
   const { chat, messages } = res;
   if (S.chatId !== id) return;
+  const switched = S.chat?.id !== id;
   S.chat = chat; S.messages = messages;
+  if (switched) shown = PAGE;
   if (!S.chats.find((c) => c.id === id)) S.chats.push({ ...chat, last: messages.at(-1) || null });
   markRead(id);
   try { localStorage.setItem('noe.lastChat', id); } catch { /* 忽略 */ }
+  if (focus) { const i = messages.findIndex((m) => m.id === focus); if (i >= 0) shown = Math.max(shown, messages.length - i + 10); }
   renderChatShell();
   renderSidebar();
-  $('#input')?.focus();
+  const input = $('#input');
+  if (input && drafts.has(id)) { input.value = drafts.get(id); autosize(); }
+  if (focus) {
+    const el = document.getElementById('m-' + focus);
+    if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1800); }
+  } else input?.focus();
 }
 
 export function closeChat() {
+  saveDraft();
   S.chatId = null; S.chat = null; S.messages = [];
   renderChatShell(); renderSidebar();
 }
@@ -165,8 +180,9 @@ export function chooseCwd(c = S.chat, { reason } = {}) {
         Object.assign(c, { cwd: dir, cwdChosen: true });
         const local = S.chats.find((x) => x.id === c.id); if (local) Object.assign(local, { cwd: dir, cwdChosen: true });
         toast(dir ? `工作目录：${dir.replace(S.home, '~')}` : '使用默认工作区', 'ok');
-        finish(true); close();
-        if (S.chat?.id === c.id) openChat(c.id);
+        close();
+        if (S.chat?.id === c.id) await openChat(c.id);
+        finish(true);
       } catch (e) { toast(e.message, 'error'); }
     };
     const recent = (S.settings.recentDirs || []).filter((d) => d !== c.cwd).slice(0, 6);
@@ -240,11 +256,17 @@ function renderMembers() {
 }
 
 // ================= 消息 =================
+// 长会话只渲染最近的 PAGE 条消息，往上翻可以继续加载，避免几千条消息一次性塞进 DOM
+const PAGE = 120;
+let shown = PAGE;
+
 export function renderMessages(scroll) {
   const box = $('#messages'); if (!box) return;
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
-  let html = '', lastDay = '', prev = null;
-  for (const m of S.messages) {
+  const start = Math.max(0, S.messages.length - shown);
+  let html = start ? `<button class="load-more" id="load-more">${icon('clock', 13)} 显示更早的 ${Math.min(PAGE, start)} 条消息（共 ${S.messages.length} 条）</button>` : '';
+  let lastDay = '', prev = null;
+  for (const m of S.messages.slice(start)) {
     const day = fmtDay(m.ts);
     if (day !== lastDay) { html += `<div class="day-sep"><span>${day}</span></div>`; lastDay = day; prev = null; }
     html += msgHtml(m, prev);
@@ -252,8 +274,24 @@ export function renderMessages(scroll) {
   }
   box.innerHTML = html || emptyChatHtml();
   if (scroll || nearBottom) box.scrollTop = box.scrollHeight;
-  $('#btn-stop')?.classList.toggle('hidden', !S.messages.some((m) => m.status === 'streaming'));
+  updateBusy();
 }
+
+/** 新消息只追加到末尾，不重绘整个列表 */
+export function appendMessage(m) {
+  const box = $('#messages'); if (!box) return;
+  const i = S.messages.indexOf(m);
+  const prev = S.messages[i - 1];
+  if (!prev || !document.getElementById('m-' + prev.id)) return renderMessages(m.sender === 'user');
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
+  const sameDay = fmtDay(prev.ts) === fmtDay(m.ts);
+  box.insertAdjacentHTML('beforeend', (sameDay ? '' : `<div class="day-sep"><span>${fmtDay(m.ts)}</span></div>`) + msgHtml(m, sameDay ? prev : null));
+  box.lastElementChild.classList.add('enter');
+  shown++;
+  if (m.sender === 'user' || nearBottom) box.scrollTop = box.scrollHeight;
+  updateBusy();
+}
+const updateBusy = () => $('#btn-stop')?.classList.toggle('hidden', !S.messages.some((m) => m.status === 'streaming'));
 
 function emptyChatHtml() {
   const c = S.chat;
@@ -278,7 +316,7 @@ function msgHtml(m, prev) {
     return `<div class="msg me ${compact ? 'compact' : ''}" id="m-${m.id}">
       <div class="body">
         <div class="bubble ${m.command ? 'cmd' : ''}">${m.command ? `${icon('slash', 13)}<span>${esc(m.text.replace(/^\//, ''))}</span>` : renderMentions(esc(m.text))}</div>
-        <div class="msg-actions">${actBtn('copy', '复制')}${actBtn('trash', '删除')}<span class="time">${fmtTime(m.ts)}</span></div>
+        <div class="msg-actions">${actBtn('copy', '复制')}${actBtn('edit', '编辑后重新发送')}${actBtn('trash', '删除')}<span class="time">${fmtTime(m.ts)}</span></div>
       </div></div>`;
   }
   const a = agentById(m.sender);
@@ -290,7 +328,11 @@ function msgHtml(m, prev) {
     meta.inTok || meta.outTok ? `${fmtNum(meta.inTok)} → ${fmtNum(meta.outTok)} tokens` : '',
     meta.cost ? '$' + meta.cost.toFixed(meta.cost < 0.01 ? 4 : 3) : '',
   ].filter(Boolean);
-  const body = m.text ? md(m.text) : m.status === 'streaming' ? `<span class="thinking"><span class="typing-dots"><i></i><i></i><i></i></span>${m.steps?.length ? esc(m.steps.at(-1).title) : '思考中'}</span>` : m.error ? '' : '<span class="muted">（没有输出）</span>';
+  const streaming = m.status === 'streaming';
+  const body = m.text ? md(m.text, { streaming })
+    : m.queued ? `<span class="thinking">${icon('clock', 13)} 排队中，等上一条任务完成后开始</span>`
+    : streaming ? `<span class="thinking"><span class="typing-dots"><i></i><i></i><i></i></span>${m.steps?.length ? esc(m.steps.at(-1).title) : '思考中'}</span>`
+    : m.error ? '' : '<span class="muted">（没有输出）</span>';
   return `<div class="msg ${compact ? 'compact' : ''} ${m.status}" id="m-${m.id}">
     ${compact ? '<div class="avatar-space"></div>' : avatar(a, 34)}
     <div class="body">
@@ -300,6 +342,7 @@ function msgHtml(m, prev) {
       ${body ? `<div class="bubble md ${m.status === 'streaming' && m.text ? 'streaming' : ''}">${body}</div>` : ''}
       ${m.error ? `<div class="err-card">${icon('alert', 16)}<div><b>运行出错</b><pre>${esc(m.error)}</pre></div></div>` : ''}
       ${m.status === 'stopped' ? `<div class="stopped">${icon('stop', 12)} 已停止</div>` : ''}
+      ${streaming ? `<div class="msg-actions live">${actBtn('stop', m.queued ? '取消排队' : '停止这条回复')}</div>` : ''}
       ${m.status !== 'streaming' ? `<div class="msg-actions">${actBtn('copy', '复制')}${m.replyTo ? actBtn('refresh', '重新生成') : ''}${actBtn('trash', '删除')}
         ${metaBits.length ? `<span class="meta">${metaBits.map(esc).join(' · ')}</span>` : ''}</div>` : ''}
     </div></div>`;
@@ -345,14 +388,15 @@ export function patchMessage(m) {
   if (nearBottom) box.scrollTop = box.scrollHeight;
 }
 
+// 流式输出时每帧都重新解析整段 Markdown 会越来越卡（文本越长越慢），限制到每 80ms 最多一次
 const pending = new Map();
 export function schedulePatch(id) {
   if (pending.has(id)) return;
-  pending.set(id, requestAnimationFrame(() => {
+  pending.set(id, setTimeout(() => {
     pending.delete(id);
     const cur = S.messages.find((x) => x.id === id);
-    if (cur) patchMessage(cur);
-  }));
+    if (cur) requestAnimationFrame(() => patchMessage(cur));
+  }, 80));
 }
 
 // ================= 发送 =================
@@ -362,8 +406,7 @@ export async function sendText(text) {
   catch (e) { toast(e.message, 'error'); throw e; }
 }
 async function send() {
-  const input = $('#input');
-  const text = input.value.trim();
+  const text = $('#input').value.trim();
   if (!text) return;
   // 新会话第一次干活前先确定工作目录，避免做出来的东西不知道放在哪
   if (!text.startsWith('/') && needsCwd(S.chat)) {
@@ -371,7 +414,9 @@ async function send() {
     const ok = await chooseCwd(S.chat, { reason: '开始之前，先选一个工作目录。' });
     if (!ok) return;
   }
-  input.value = ''; autosize(); hideSuggest();
+  // 选择目录后会话会重绘，输入框已经换成新的元素，重新获取
+  const input = $('#input');
+  input.value = ''; autosize(); hideSuggest(); drafts.delete(S.chatId);
   history.unshift(text); histIdx = -1;
   try { await sendText(text); } catch { input.value = text; }
 }
@@ -667,6 +712,7 @@ function bindChat() {
       { label: '查看成员状态', icon: 'info', onClick: () => sendText('/status') },
       ...(c.type === 'group' ? [{ label: c.pinned ? '取消置顶' : '置顶群聊', icon: 'pin', onClick: () => api('PATCH', `/api/chats/${c.id}`, { pinned: !c.pinned }) }] : []),
       { label: '切换工作目录', icon: 'folder', onClick: () => chooseCwd(c) },
+      { label: '导出聊天记录', sub: '保存为 Markdown 文件', icon: 'download', onClick: () => exportChat(c.id) },
       { divider: true },
       { label: '清空聊天记录', icon: 'trash', danger: true, onClick: async () => { if (await confirmBox('清空本会话的聊天记录，并重置所有 AI 的上下文？', { danger: true, ok: '清空' })) sendText('/clear'); } },
       ...(c.type === 'group' ? [{ label: '解散群聊', icon: 'x', danger: true, onClick: deleteGroup }] : []),
@@ -681,11 +727,20 @@ function bindChat() {
     if (e.target.closest('[data-choose-cwd]')) return chooseCwd(S.chat);
     const fill = e.target.closest('[data-fill]');
     if (fill) { input.value = fill.dataset.fill; autosize(); input.focus(); return; }
+    if (e.target.closest('#load-more')) {
+      const h = box.scrollHeight;
+      shown += PAGE; renderMessages();
+      box.scrollTop = box.scrollHeight - h; // 保持当前看到的位置不跳
+      return;
+    }
     const act = e.target.closest('[data-act]');
     if (!act) return;
     const id = act.closest('.msg').id.slice(2);
     const m = S.messages.find((x) => x.id === id);
+    if (!m) return;
     if (act.dataset.act === 'copy') copyText(m.text);
+    if (act.dataset.act === 'edit') { input.value = m.text; autosize(); input.focus(); input.setSelectionRange(m.text.length, m.text.length); computeSuggest(); }
+    if (act.dataset.act === 'stop') api('POST', `/api/chats/${encodeURIComponent(S.chatId)}/stop`, { messageId: id }).catch((err) => toast(err.message, 'error'));
     if (act.dataset.act === 'refresh') api('POST', `/api/chats/${encodeURIComponent(S.chatId)}/retry`, { messageId: id }).catch((err) => toast(err.message, 'error'));
     if (act.dataset.act === 'trash') api('DELETE', `/api/chats/${encodeURIComponent(S.chatId)}/messages/${id}`);
   });
@@ -701,6 +756,16 @@ function bindChat() {
       if (e.target.id === 'group-cwd') api('PATCH', `/api/chats/${S.chatId}`, { cwd: e.target.value.trim() }).then(() => openChat(S.chatId));
     });
   }
+}
+async function exportChat(id) {
+  try {
+    const { name, markdown } = await api('GET', `/api/chats/${encodeURIComponent(id)}/export`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast(`已导出 ${name}`, 'ok');
+  } catch (e) { toast(e.message, 'error'); }
 }
 async function deleteGroup() {
   if (await confirmBox(`解散群聊「${S.chat.name}」？聊天记录会被删除。`, { danger: true, ok: '解散' })) await api('DELETE', `/api/chats/${S.chatId}`);
@@ -744,27 +809,52 @@ export function setupDnD() {
   });
 }
 
-// ================= 快速切换（⌘K） =================
+// ================= 快速切换 + 搜索消息（⌘K） =================
 export function quickSwitch() {
   const all = [
     ...S.agents.map((a) => ({ id: 'dm-' + a.id, name: a.name, sub: '私聊 · ' + authInfo(a).label, av: avatar(a, 28) })),
     ...S.chats.filter((c) => c.type === 'group').map((c) => ({ id: c.id, name: c.name, sub: `群聊 · ${c.members.length} 位成员`, av: groupAvatar(c, 28) })),
   ];
-  let sel = 0, list = all;
+  let sel = 0, list = all, hits = [], timer = null, seq = 0;
+  const chatName = (id) => id.startsWith('dm-') ? agentById(id.slice(3))?.name || id : S.chats.find((c) => c.id === id)?.name || id;
   const m = modal({
-    title: '快速切换', width: 480,
-    body: `<input class="qs-input" id="qs" placeholder="搜索 AI 或群聊…"><div class="qs-list" id="qs-list"></div>`,
+    title: '快速切换', width: 520,
+    body: `<input class="qs-input" id="qs" placeholder="搜索 AI、群聊或聊天记录…"><div class="qs-list" id="qs-list"></div>`,
     onMount: (el, close) => {
+      const items = () => [...list, ...hits];
       const draw = () => {
-        el.querySelector('#qs-list').innerHTML = list.map((x, i) => `<div class="qs-item ${i === sel ? 'sel' : ''}" data-i="${i}">${x.av}<span>${esc(x.name)}</span><small>${esc(x.sub)}</small></div>`).join('') || '<div class="muted" style="padding:12px">没有匹配项</div>';
+        const msgHead = hits.length ? `<div class="qs-sec">聊天记录</div>` : '';
+        el.querySelector('#qs-list').innerHTML = (list.map((x, i) => row(x, i)).join('') + msgHead + hits.map((x, i) => row(x, list.length + i)).join(''))
+          || '<div class="muted" style="padding:12px">没有匹配项</div>';
+        el.querySelector('.qs-item.sel')?.scrollIntoView({ block: 'nearest' });
       };
-      const go = (i) => { if (list[i]) { close(); emit('goto', 'chat'); openChat(list[i].id); } };
+      const row = (x, i) => `<div class="qs-item ${i === sel ? 'sel' : ''} ${x.msg ? 'msg' : ''}" data-i="${i}">${x.av}<span>${esc(x.name)}</span><small>${x.msg ? x.sub : esc(x.sub)}</small></div>`;
+      const go = (i) => { const x = items()[i]; if (x) { close(); emit('goto', 'chat'); openChat(x.chatId || x.id, { focus: x.msg }); } };
       const q = el.querySelector('#qs');
-      q.oninput = () => { const s = q.value.toLowerCase(); list = all.filter((x) => x.name.toLowerCase().includes(s) || x.sub.toLowerCase().includes(s)); sel = 0; draw(); };
+      q.oninput = () => {
+        const s = q.value.trim().toLowerCase();
+        list = all.filter((x) => x.name.toLowerCase().includes(s) || x.sub.toLowerCase().includes(s)); sel = 0; hits = []; draw();
+        clearTimeout(timer);
+        if (s.length < 2) return;
+        const my = ++seq;
+        timer = setTimeout(async () => {
+          try {
+            const { results } = await api('GET', '/api/search?q=' + encodeURIComponent(s));
+            if (my !== seq) return;
+            hits = results.map((r) => {
+              const a = agentById(r.sender);
+              const hl = esc(r.snippet).replace(new RegExp(esc(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (x) => `<mark>${x}</mark>`);
+              return { chatId: r.chatId, msg: r.id, name: `${chatName(r.chatId)} · ${r.sender === 'user' ? '我' : a?.name || r.sender}`, sub: hl, av: a ? avatar(a, 28) : `<span class="qs-ic">${icon('search', 15)}</span>` };
+            });
+            draw();
+          } catch { /* 忽略 */ }
+        }, 200);
+      };
       q.onkeydown = (e) => {
-        if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, list.length - 1); draw(); }
+        const n = items().length;
+        if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, n - 1); draw(); }
         if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); draw(); }
-        if (e.key === 'Enter') go(sel);
+        if (e.key === 'Enter' && !e.isComposing) go(sel);
       };
       el.querySelector('#qs-list').onclick = (e) => { const it = e.target.closest('[data-i]'); if (it) go(+it.dataset.i); };
       draw(); setTimeout(() => q.focus(), 30);

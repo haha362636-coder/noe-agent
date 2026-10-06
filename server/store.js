@@ -76,8 +76,9 @@ function flush() {
   if (!data) return;
   fs.mkdirSync(DIR, { recursive: true });
   const tmp = FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+  // 不缩进：聊天记录多了以后缩进格式会让文件大一倍、写入更慢
+  fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
   fs.renameSync(tmp, FILE);
 }
 
-module.exports = { load, save, flush, DIR };
+module.exports = { load, save, flush, defaults, DIR };

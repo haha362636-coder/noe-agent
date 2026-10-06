@@ -1,7 +1,7 @@
 {
   "name": "noe-agent",
   "productName": "Noe Agent",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "description": "一键安装、配置 AI CLI，并像聊天软件一样和 Claude Code / Codex / DeepSeek Harness 等私聊、拉群、@ 干活",
   "license": "MIT",
   "author": "haha362636-coder",

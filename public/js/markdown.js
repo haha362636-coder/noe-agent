@@ -9,7 +9,8 @@ marked.use({
     code({ text, lang }) {
       const language = (lang || '').split(/\s/)[0];
       let html;
-      try { html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language }).value : hljs.highlightAuto(text).value; }
+      // highlightAuto 要把所有语言都试一遍，很慢：长代码块或流式输出中直接不自动识别
+      try { html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language }).value : !fast && text.length < 4000 ? hljs.highlightAuto(text).value : esc(text); }
       catch { html = esc(text); }
       return `<div class="code"><div class="code-head"><span>${esc(language || 'code')}</span><button class="code-copy" data-copy>复制</button></div><pre><code class="hljs">${html}</code></pre></div>`;
     },
@@ -38,9 +39,23 @@ export function looksLikePath(s) {
 }
 const ABS_PATH_IN_TEXT = /((?:~|\/(?:Users|home|tmp|private|Volumes))\/[^\s`'"<>，。；：、）)\]]+)/g;
 
-export function md(src) {
-  const html = DOMPurify.sanitize(marked.parse(String(src || '')), { ADD_ATTR: ['target', 'data-copy', 'data-open-path'] });
-  return mentionify(html);
+// 渲染结果缓存：每次有新消息或流式更新时，其他消息不必重新解析 Markdown 和高亮代码
+const cache = new Map();
+let fast = false;
+/** opts.streaming：正在流式输出的消息，跳过昂贵的自动语言识别，也不进缓存 */
+export function md(src, { streaming } = {}) {
+  src = String(src || '');
+  const hit = !streaming && cache.get(src);
+  if (hit) { cache.delete(src); cache.set(src, hit); return hit; }
+  fast = !!streaming;
+  let html;
+  try { html = mentionify(DOMPurify.sanitize(marked.parse(src), { ADD_ATTR: ['target', 'data-copy', 'data-open-path'] })); }
+  finally { fast = false; }
+  if (!streaming) {
+    cache.set(src, html);
+    if (cache.size > 400) cache.delete(cache.keys().next().value);
+  }
+  return html;
 }
 
 // 只替换文本节点里的 @，不碰代码块

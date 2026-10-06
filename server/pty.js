@@ -34,7 +34,9 @@ function open(opts) {
   const dec = new StringDecoder('utf8');
   let typed = !opts.typeAfter, quietTimer = null;
   const push = (data) => {
-    t.buffer = (t.buffer + data).slice(-200000);
+    // 输出很密集时（如 npm 安装日志）每次拼接 20 万字符的字符串很浪费，攒到两倍上限再裁剪
+    t.buffer += data;
+    if (t.buffer.length > 400000) t.buffer = t.buffer.slice(-200000);
     emit('term.data', { id, data });
     if (!typed) {
       clearTimeout(quietTimer);

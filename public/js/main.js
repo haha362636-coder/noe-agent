@@ -1,7 +1,7 @@
 // 入口：加载状态、实时事件、视图切换、全局快捷键
 import { $, $$, S, api, toast, on, emit, agentById, closeMenu } from './core.js';
 import {
-  renderSidebar, openChat, closeChat, renderChatShell, renderChatHead, renderMessages, patchMessage, schedulePatch,
+  renderSidebar, openChat, closeChat, renderChatShell, renderChatHead, renderMessages, appendMessage, patchMessage, schedulePatch,
   sendText, sourceMenu, openNewGroup, createTemplateGroup, setupDnD, quickSwitch,
 } from './chat.js';
 import { renderTools, renderProviders, renderSettings, bindPages } from './pages.js';
@@ -58,6 +58,7 @@ on('theme', applyTheme);
 
 // ---------- 实时事件 ----------
 function notify(m) {
+  if (m.status === 'streaming' || m.status === 'stopped') return;
   if (!S.settings.notify || document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return;
   const a = agentById(m.sender); if (!a) return;
   const n = new Notification(`${a.name} 回复了`, { body: (m.error ? '⚠ ' + m.error : m.text).slice(0, 120), silent: false });
@@ -76,7 +77,7 @@ function connectEvents() {
     touch(m);
     if (m.chatId === S.chatId) {
       S.messages.push(m);
-      renderMessages(m.sender === 'user');
+      appendMessage(m);
       renderChatHead();
     }
     renderSidebar();
@@ -88,6 +89,7 @@ function connectEvents() {
     m.text += delta; schedulePatch(id);
   });
   sub('message.step', ({ id, chatId, step }) => {
+    if (chatId === S.chatLoading) S.chatDirty = true;
     if (chatId !== S.chatId) return;
     const m = S.messages.find((x) => x.id === id); if (!m) return;
     m.steps.push(step); schedulePatch(id);
