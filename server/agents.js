@@ -1,7 +1,7 @@
 // AI CLI 注册表 + 运行适配器
 // 每个 agent 描述：如何安装、支持哪些 API 协议、如何登录、如何以无头模式运行并解析输出。
 const { spawn, execFile } = require('child_process');
-const { baseEnv, which } = require('./env');
+const { baseEnv, which, resolveCommand } = require('./env');
 const { trimSlash } = require('./providers');
 
 // Claude Code 里只能在交互界面用的 / 命令：自动转到内置终端执行
@@ -167,14 +167,16 @@ function authStatus(agent) {
     const bin = which(agent.bin);
     if (!bin) return resolve(null);
     if (agent.id === 'claude') {
-      execFile(bin, ['auth', 'status', '--json'], { env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out) => {
+      const [file, args, o] = resolveCommand(bin, ['auth', 'status', '--json']);
+      execFile(file, args, { ...o, env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out) => {
         try {
           const j = JSON.parse(out);
           resolve({ loggedIn: !!j.loggedIn, detail: j.loggedIn ? [j.authMethod, j.email || j.account?.email].filter(Boolean).join(' · ') : '未登录' });
         } catch { resolve(null); }
       });
     } else if (agent.id === 'codex') {
-      execFile(bin, ['login', 'status'], { env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out, errOut) => {
+      const [file, args, o] = resolveCommand(bin, ['login', 'status']);
+      execFile(file, args, { ...o, env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out, errOut) => {
         const t = String(out || errOut || '').trim();
         const line = t.split('\n')[0] || '';
         resolve({ loggedIn: !err && !/not logged in/i.test(t), detail: line.replace(/^logged in using (an? )?/i, '').replace(/^ChatGPT$/i, 'ChatGPT 账号') || (err ? '未登录' : '') });
@@ -222,9 +224,19 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
     args = agent.args(prompt, { model: agent.noModel ? '' : model, autoApprove });
   }
 
-  const bin = which(agent.bin) || agent.bin;
+  const [file, fileArgs, spawnOpts] = resolveCommand(agent.bin, args);
   const started = Date.now();
-  const proc = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(file, fileArgs, { ...spawnOpts, cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  // Windows 上 kill 只结束 node 本身，CLI 拉起的命令会留在后台，所以连同子进程树一起结束
+  let treeKilled = false;
+  if (process.platform === 'win32') {
+    proc.kill = () => {
+      if (treeKilled || proc.exitCode !== null) return false;
+      treeKilled = true;
+      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+      return true;
+    };
+  }
 
   let text = '';
   let gotDelta = false;
@@ -315,7 +327,8 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
     proc.on('error', (e) => {
       finish({ text, sessionId: newSession, error: e.code === 'ENOENT' ? `未找到命令 ${agent.bin}，请先在「工具」页面一键安装` : e.message });
     });
-    proc.on('close', (code, signal) => {
+    proc.on('close', (code, sig) => {
+      const signal = sig || (treeKilled ? 'SIGTERM' : null);
       if (buf.trim()) handleLine(buf);
       if (agent.mode === 'text') text = text.replace(/\n+$/, '');
       if (signal && authAbort) return finish({ text, sessionId: newSession, error: errorMsg });

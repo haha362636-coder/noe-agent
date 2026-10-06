@@ -18,14 +18,31 @@ function applyTheme() {
 }
 mq.addEventListener('change', applyTheme);
 applyTheme();
-if (new URLSearchParams(location.search).has('app')) document.documentElement.classList.add('electron');
+// .electron 给 macOS 红绿灯按钮留位置；Windows 用系统标题栏，不需要
+const isWin = /Windows/i.test(navigator.userAgent);
+if (new URLSearchParams(location.search).has('app') && !isWin) document.documentElement.classList.add('electron');
+// Windows 上快捷键是 Ctrl，把界面里的 ⌘ 提示换掉
+if (isWin) {
+  const swap = (root) => {
+    for (const el of root.querySelectorAll('[title*="⌘"]')) el.title = el.title.replace(/⌘/g, 'Ctrl+');
+    for (const el of root.querySelectorAll('kbd')) if (el.textContent.includes('⌘')) el.textContent = el.textContent.replace(/⌘/g, 'Ctrl+');
+  };
+  swap(document);
+  new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) swap(n.parentNode || n); })
+    .observe(document.body, { childList: true, subtree: true });
+}
 
 // ---------- 状态 ----------
 let loading = null;
+let modelsLoading = null;
 async function loadState() {
   if (loading) return loading;
   loading = (async () => {
-    const [st] = await Promise.all([api('GET', '/api/state'), S.models ? null : api('GET', '/api/models').then((m) => { S.models = m; }).catch(() => {})]);
+    // 模型目录要调用 codex debug models，可能要好几秒：不等它，先把界面画出来，到了再刷新
+    if (!S.models && !modelsLoading) {
+      modelsLoading = api('GET', '/api/models').then((m) => { S.models = m; reload(); }).catch(() => { modelsLoading = null; });
+    }
+    const st = await api('GET', '/api/state');
     const { chats, ...rest } = st;
     Object.assign(S, rest);
     S.chats = chats;

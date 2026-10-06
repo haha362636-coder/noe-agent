@@ -38,6 +38,7 @@ if (!app.requestSingleInstanceLock()) {
       ...bounds, minWidth: 900, minHeight: 600,
       title: 'Noe Agent',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+      autoHideMenuBar: process.platform !== 'darwin', // Windows：隐藏 File/Edit 菜单栏，按 Alt 仍可显示
       backgroundColor: '#f6f7f9',
       show: false,
       webPreferences: { contextIsolation: true },
@@ -67,6 +68,7 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore();
     win.show(); win.focus();
   });
+  if (process.platform === 'win32') app.setAppUserModelId('com.noeagent.app'); // 任务栏分组和系统通知需要
   app.whenReady().then(createWindow);
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

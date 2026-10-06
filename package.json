@@ -21,7 +21,8 @@
     "make:icon": "electron scripts/make-icon.js",
     "dist:mac": "electron-builder --mac --arm64 --x64",
     "dist:mac-arm64": "electron-builder --mac --arm64",
-    "dist:mac-x64": "electron-builder --mac --x64"
+    "dist:mac-x64": "electron-builder --mac --x64",
+    "dist:win": "node scripts/build-win.js"
   },
   "engines": {
     "node": ">=18"

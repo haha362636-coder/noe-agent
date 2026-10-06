@@ -5,3 +5,7 @@ release/
 promo/node_modules/
 promo/out/
 promo/work/
+promo/music/*.mp3
+build-win/
+dist-win/
+release-win/

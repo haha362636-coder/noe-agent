@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { baseEnv, which } = require('./env');
+const { baseEnv, resolveCommand } = require('./env');
 
 const HOME = os.homedir();
 const P = {
@@ -17,8 +17,8 @@ const P = {
 // ---------- 子进程 ----------
 function run(argv, { env, cwd, timeout = 180000, onLog } = {}) {
   return new Promise((resolve) => {
-    const bin = which(argv[0]) || argv[0];
-    const proc = spawn(bin, argv.slice(1), { env: env || baseEnv(), cwd: cwd || HOME, stdio: ['ignore', 'pipe', 'pipe'] });
+    const [file, args, o] = resolveCommand(argv[0], argv.slice(1));
+    const proc = spawn(file, args, { ...o, env: env || baseEnv(), cwd: cwd || HOME, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     const add = (c) => { const s = c.toString(); out += s; onLog?.(s); };
     proc.stdout.on('data', add); proc.stderr.on('data', add);

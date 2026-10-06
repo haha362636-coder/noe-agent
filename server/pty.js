@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const path = require('path');
 const crypto = require('crypto');
-const { baseEnv, which } = require('./env');
+const { baseEnv, which, resolveCommand } = require('./env');
 
 const BRIDGE = path.join(__dirname, 'pty_bridge.py').replace('app.asar', 'app.asar.unpacked');
 const terms = new Map();
@@ -23,7 +23,8 @@ function open(opts) {
   if (resolved) argv[0] = resolved;
   const env = { ...(opts.env || baseEnv()), TERM: 'xterm-256color', COLORTERM: 'truecolor' };
   delete env.NO_COLOR; delete env.FORCE_COLOR;
-  const proc = spawn(process.env.NOE_PYTHON || 'python3', [BRIDGE, String(cols), String(rows), ...argv], {
+  // Windows 没有 Python pty，改用 ConPTY（node-pty），对外暴露同样的 proc 接口
+  const proc = process.platform === 'win32' ? winPty(argv, { cols, rows, cwd: opts.cwd, env }) : spawn(process.env.NOE_PYTHON || 'python3', [BRIDGE, String(cols), String(rows), ...argv], {
     cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
   const t = {
@@ -55,6 +56,31 @@ function open(opts) {
   });
   emit('term.open', summary(t));
   return t;
+}
+
+// 把 node-pty 包装成和 pty_bridge 子进程一样的形状：stdout/stderr 事件、stdin.write、stdio[3] 调整尺寸、kill、close
+function winPty(argv, { cols, rows, cwd, env }) {
+  const { EventEmitter } = require('events');
+  const proc = new EventEmitter();
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  let p;
+  try {
+    const [file, args] = resolveCommand(argv[0], argv.slice(1));
+    p = require('@lydell/node-pty').spawn(file, args, { name: 'xterm-256color', cols, rows, cwd, env, useConpty: true });
+  } catch (e) {
+    setImmediate(() => { proc.emit('error', e); proc.emit('close', 1); });
+    proc.stdin = { write() {} };
+    proc.stdio = [null, null, null, { write() {} }];
+    proc.kill = () => {};
+    return proc;
+  }
+  p.onData((d) => proc.stdout.emit('data', Buffer.from(d, 'utf8')));
+  p.onExit(({ exitCode }) => proc.emit('close', exitCode));
+  proc.stdin = { write: (d) => { try { p.write(d); } catch { /* 已退出 */ } } };
+  proc.stdio = [null, null, null, { write: (line) => { const [c, r] = String(line).trim().split(/\s+/).map(Number); try { p.resize(c, r); } catch { /* 已退出 */ } } }];
+  proc.kill = () => { try { p.kill(); } catch { /* 已退出 */ } };
+  return proc;
 }
 
 function write(id, data) {

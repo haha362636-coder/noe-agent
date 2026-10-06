@@ -9,7 +9,7 @@ const store = require('./store');
 const pty = require('./pty');
 const { PRESETS, PROTOCOLS, testProvider, listModels } = require('./providers');
 const { BUILTIN, CLAUDE_INTERACTIVE, fromCustom, installCmd, uninstallCmd, runAgent, resolveAuth, supports, authStatus, interactiveArgv, stripAnsi } = require('./agents');
-const { baseEnv, which, setGlobalEnv } = require('./env');
+const { baseEnv, which, resolveCommand, setGlobalEnv } = require('./env');
 const ext = require('./extensions');
 const { CATALOG, GEMINI_EXTENSIONS, CLAUDE_MARKETPLACES } = require('./mcp-catalog');
 const models = require('./models');
@@ -47,7 +47,8 @@ function checkStatus(agent) {
     if (!p) { authCache[agent.id] = null; return resolve((statusCache[agent.id] = { installed: false })); }
     // 自定义 CLI 可能根本不认识 --version，会把它当成任务去执行，所以只检查是否存在
     if (agent.custom) { authCache[agent.id] = null; return resolve((statusCache[agent.id] = { installed: true, version: '', path: p })); }
-    execFile(p, ['--version'], { env: baseEnv(), cwd: os.homedir(), timeout: 15000 }, async (err, out, errOut) => {
+    const [file, args, o] = resolveCommand(p, ['--version']);
+    execFile(file, args, { ...o, env: baseEnv(), cwd: os.homedir(), timeout: 15000, windowsHide: true }, async (err, out, errOut) => {
       const raw = stripAnsi(String(out || errOut || '')).trim().split('\n')[0] || '';
       const version = (raw.match(/\d+\.\d+[\w.\-]*/) || [''])[0];
       statusCache[agent.id] = { installed: true, version: version.slice(0, 40), path: p };
@@ -89,7 +90,7 @@ function runShell(agentId, cmd, label) {
   if (installs[agentId]) return false;
   const shell = process.platform === 'win32' ? 'cmd.exe' : (process.env.SHELL || '/bin/zsh');
   const args = process.platform === 'win32' ? ['/c', cmd] : ['-lc', cmd];
-  const proc = spawn(shell, args, { env: baseEnv(), cwd: os.homedir() });
+  const proc = spawn(shell, args, { env: baseEnv(), cwd: os.homedir(), windowsHide: true });
   installs[agentId] = proc;
   broadcast('install.log', { agentId, line: `$ ${cmd}\n` });
   broadcast('agents.changed', {});
@@ -142,8 +143,10 @@ function openAgentTerminal(agent, chat, { initial, typeAfter } = {}) {
 }
 
 function openShell(chat) {
-  const shell = process.env.SHELL || '/bin/zsh';
-  return pty.open({ argv: [shell, '-l'], env: baseEnv(), cwd: chat ? chatCwd(chat) : os.homedir(), chatId: chat?.id, kind: 'shell', title: `终端 · ${chat ? path.basename(chatCwd(chat)) : '~'}` });
+  const argv = process.platform === 'win32'
+    ? (which('pwsh') ? ['pwsh', '-NoLogo'] : ['powershell.exe', '-NoLogo'])
+    : [process.env.SHELL || '/bin/zsh', '-l'];
+  return pty.open({ argv, env: baseEnv(), cwd: chat ? chatCwd(chat) : os.homedir(), chatId: chat?.id, kind: 'shell', title: `终端 · ${chat ? path.basename(chatCwd(chat)) : '~'}` });
 }
 
 // ---------- 聊天 ----------
@@ -180,9 +183,15 @@ function parseMentions(text, chat, exclude) {
   const lower = text.toLowerCase();
   const hits = [];
   const all = /@(all|所有人|全体)(?![a-z0-9_-])/i.test(text);
+  // 命令名也能当别名（@dsh），但和其他成员的 ID / 命令重名时不算：
+  // 例如用 codex 命令驱动的自定义“审查员”，不能被 @codex 一起叫来
+  const binCount = {};
+  for (const a of members) for (const k of new Set([a.id, a.bin.toLowerCase()])) binCount[k] = (binCount[k] || 0) + 1;
   for (const a of members) {
+    const bin = a.bin.toLowerCase();
+    const useBin = bin !== a.id && binCount[bin] === 1;
     // 名称里的空格允许省略或保留：@claude code、@claudecode 都能匹配
-    const aliases = [reEsc(a.id), reEsc(a.bin.toLowerCase()), a.name.toLowerCase().trim().split(/\s+/).map(reEsc).join('\\s*')];
+    const aliases = [reEsc(a.id), ...(useBin ? [reEsc(bin)] : []), a.name.toLowerCase().trim().split(/\s+/).map(reEsc).join('\\s*')];
     let pos = all ? 0 : Infinity;
     for (const al of aliases) {
       const m = new RegExp('@' + al + '(?![a-z0-9_-])').exec(lower);
@@ -854,9 +863,10 @@ function rememberDir(dir) {
   db.settings.recentDirs = [dir, ...list].slice(0, 8);
   store.save();
 }
-const expandHome = (p) => String(p || '').trim().replace(/^~(?=$|\/)/, os.homedir());
+const expandHome = (p) => String(p || '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
 
 route('POST', '/api/pick-folder', async (_, b) => {
+  if (process.platform === 'win32') return pickFolderWin(b);
   if (process.platform !== 'darwin') throw httpErr(400, '当前系统不支持原生选择框，请直接输入路径');
   const esc = (x) => String(x).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const def = expandHome(b.defaultPath || '');
@@ -873,16 +883,51 @@ route('POST', '/api/pick-folder', async (_, b) => {
   });
 });
 
+// Windows：用 PowerShell 调起系统的文件夹选择框
+function pickFolderWin(b) {
+  const def = expandHome(b.defaultPath || '');
+  const ps = (x) => `'${String(x).replace(/'/g, "''")}'`;
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+    '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+    `$d.Description = ${ps(b.prompt || '选择工作目录')}`,
+    '$d.ShowNewFolderButton = $true',
+    def && fs.existsSync(def) ? `$d.SelectedPath = ${ps(def)}` : '',
+    '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }',
+    'if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }',
+  ].filter(Boolean).join('; ');
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-STA', '-NonInteractive', '-EncodedCommand', encoded], { timeout: 10 * 60e3, windowsHide: true, encoding: 'utf8' }, (err, out) => {
+      const dir = String(out || '').trim();
+      if (err || !dir) return resolve({ cancelled: true });
+      rememberDir(dir);
+      resolve({ path: dir });
+    });
+  });
+}
+
 // 打开 AI 回复里提到的文件 / 目录：相对路径按会话的工作目录解析，用系统默认程序打开
 route('POST', '/api/open', async (_, b) => {
   let target = String(b.path || '').trim();
-  if (/^https?:\/\//i.test(target)) { spawn('open', [target]); return { ok: true, path: target }; }
-  target = decodeURIComponent(target.replace(/^file:\/\//i, '')).replace(/[#?].*$/, '');
+  if (/^https?:\/\//i.test(target)) {
+    if (process.platform === 'win32') spawn('rundll32', ['url.dll,FileProtocolHandler', target], { detached: true, stdio: 'ignore' }).unref();
+    else spawn('open', [target]);
+    return { ok: true, path: target };
+  }
+  target = decodeURIComponent(target.replace(process.platform === 'win32' ? /^file:\/\/\/?/i : /^file:\/\//i, '')).replace(/[#?].*$/, '');
   const chat = b.chatId ? getChat(b.chatId) : null;
   const base = chat ? chatCwd(chat) : os.homedir();
   const full = path.resolve(base, expandHome(target));
   if (!fs.existsSync(full)) throw httpErr(404, `找不到文件：${full.replace(os.homedir(), '~')}`);
-  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  if (process.platform === 'win32') {
+    // explorer 的 /select, 参数要和路径连在一起；直接打开文件走 FileProtocolHandler，避免 explorer 把路径当成命令行解析
+    const [cmd, args] = b.reveal ? ['explorer.exe', [`/select,"${full}"`]] : ['rundll32', ['url.dll,FileProtocolHandler', full]];
+    spawn(cmd, args, { detached: true, stdio: 'ignore', windowsVerbatimArguments: b.reveal }).unref();
+    return { ok: true, path: full };
+  }
+  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
   spawn(opener, b.reveal && process.platform === 'darwin' ? ['-R', full] : [full], { detached: true, stdio: 'ignore' }).unref();
   return { ok: true, path: full };
 });
