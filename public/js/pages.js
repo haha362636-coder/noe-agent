@@ -380,6 +380,8 @@ export function renderSettings() {
       <div class="set-row"><div><b>外观</b><small>跟随系统，或固定浅色 / 深色</small></div>
         <div class="seg">${[['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']].map(([k, l]) => `<button class="${theme === k ? 'on' : ''}" data-theme="${k}">${l}</button>`).join('')}</div></div>
       <div class="set-row"><div><b>新会话先选择工作目录</b><small>第一次发消息前弹出文件夹选择，避免 AI 把东西做在找不到的地方</small></div><label class="switch"><input type="checkbox" name="askCwd" ${s.askCwd !== false ? 'checked' : ''}><i></i></label></div>
+      <div class="set-row"><div><b>时光机</b><small>记录每条 AI 回复改了哪些文件，可以查看差异、一键撤销或恢复。快照保存在 ~/.noe-agent/snapshots，不会动项目自己的 Git</small></div>
+        <div class="row-gap"><button class="btn xs ghost" id="btn-clear-snap">清理快照</button><label class="switch"><input type="checkbox" name="snapshots" ${s.snapshots !== false ? 'checked' : ''}><i></i></label></div></div>
       <div class="set-row"><div><b>完成通知</b><small>窗口不在前台时，AI 回复完成后发系统通知</small></div><label class="switch"><input type="checkbox" name="notify" ${s.notify ? 'checked' : ''}><i></i></label></div>
     </div>
     <div class="set-card">
@@ -402,7 +404,13 @@ export function renderSettings() {
 }
 function bindSettings() {
   const page = $('#view-settings');
-  page.addEventListener('click', (e) => {
+  page.addEventListener('click', async (e) => {
+    if (e.target.closest('#btn-clear-snap')) {
+      if (await confirmBox('删除所有时光机快照？之前回复里的改动将无法再查看差异或撤销。', { danger: true, ok: '清理' })) {
+        await api('POST', '/api/snapshots/clear').then(() => toast('快照已清理', 'ok')).catch((er) => toast(er.message, 'error'));
+      }
+      return;
+    }
     const t = e.target.closest('[data-theme]'); if (!t) return;
     try { localStorage.setItem('noe.theme', t.dataset.theme); } catch { /* 忽略 */ }
     emit('theme'); renderSettings();

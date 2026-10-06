@@ -840,3 +840,46 @@ form.market.add { margin-top: 12px; }
 .qs-item.msg small { flex-basis: 100%; margin-left: 38px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qs-item mark { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .qs-ic { width: 28px; height: 28px; display: grid; place-items: center; color: var(--muted); flex: none; }
+
+/* 时光机：文件改动卡片 */
+.changes { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; max-width: 640px; font-size: 12.5px; }
+.changes.reverted { opacity: .75; border-style: dashed; }
+.changes.reverted .ch-path { text-decoration: line-through; text-decoration-color: var(--faint); }
+.ch-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--line-2); color: var(--muted); }
+.ch-head b { color: var(--text, inherit); font-weight: 600; }
+.ch-stat, .ch-n { display: inline-flex; gap: 6px; font-family: var(--mono); font-size: 11.5px; }
+.ch-stat i, .ch-n i { font-style: normal; }
+.plus { color: #16a34a; } .minus { color: var(--danger); }
+.ch-btn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--muted); cursor: pointer; }
+.ch-btn:hover { color: var(--accent-text); border-color: var(--accent); }
+.ch-btn.undo:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.ch-files { padding: 4px 0; }
+.ch-file { display: flex; align-items: center; gap: 8px; padding: 4px 12px; cursor: pointer; }
+.ch-file:hover { background: var(--active); }
+.ch-file.more { color: var(--muted); font-size: 12px; }
+.ch-st { flex: none; width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center; font: 600 10px/1 var(--mono); color: #fff; }
+.st-add { background: #16a34a; } .st-mod { background: #d97706; } .st-del { background: var(--danger); }
+.ch-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; direction: rtl; text-align: left; }
+.row-gap { display: flex; align-items: center; gap: 10px; }
+
+/* 差异查看器 */
+.diff-wrap { display: flex; gap: 12px; height: min(64vh, 640px); }
+.diff-list { width: 260px; flex: none; overflow-y: auto; border-right: 1px solid var(--line-2); padding-right: 8px; }
+.diff-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none; border-radius: 8px; text-align: left; cursor: pointer; color: inherit; }
+.diff-item:hover { background: var(--line-2); }
+.diff-item.on { background: var(--active); }
+.diff-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.diff-bar { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
+.diff-bar code { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-view { flex: 1; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg, var(--panel)); }
+.diff-empty { display: grid; place-items: center; height: 100%; color: var(--muted); padding: 24px; text-align: center; }
+table.diff { border-collapse: collapse; width: 100%; font: 12px/1.55 var(--mono); }
+table.diff td { padding: 0 8px; white-space: pre; vertical-align: top; }
+table.diff td:nth-child(-n+2) { width: 1%; color: var(--faint); text-align: right; user-select: none; border-right: 1px solid var(--line-2); }
+table.diff tr.add td:last-child { background: color-mix(in srgb, #16a34a 14%, transparent); }
+table.diff tr.add td:nth-child(-n+2) { background: color-mix(in srgb, #16a34a 8%, transparent); }
+table.diff tr.del td:last-child { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+table.diff tr.del td:nth-child(-n+2) { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+table.diff tr.hunk td { background: var(--active); color: var(--accent-text); padding-top: 3px; padding-bottom: 3px; }
+table.diff tr.meta td { color: var(--faint); }
+.modal:focus { outline: none; }

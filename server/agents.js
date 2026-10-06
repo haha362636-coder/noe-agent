@@ -167,14 +167,14 @@ function authStatus(agent) {
     const bin = which(agent.bin);
     if (!bin) return resolve(null);
     if (agent.id === 'claude') {
-      execFile(bin, ['auth', 'status', '--json'], { env: baseEnv(), timeout: 15000 }, (err, out) => {
+      execFile(bin, ['auth', 'status', '--json'], { env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out) => {
         try {
           const j = JSON.parse(out);
           resolve({ loggedIn: !!j.loggedIn, detail: j.loggedIn ? [j.authMethod, j.email || j.account?.email].filter(Boolean).join(' · ') : '未登录' });
         } catch { resolve(null); }
       });
     } else if (agent.id === 'codex') {
-      execFile(bin, ['login', 'status'], { env: baseEnv(), timeout: 15000 }, (err, out, errOut) => {
+      execFile(bin, ['login', 'status'], { env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out, errOut) => {
         const t = String(out || errOut || '').trim();
         const line = t.split('\n')[0] || '';
         resolve({ loggedIn: !err && !/not logged in/i.test(t), detail: line.replace(/^logged in using (an? )?/i, '').replace(/^ChatGPT$/i, 'ChatGPT 账号') || (err ? '未登录' : '') });

@@ -340,6 +340,7 @@ function msgHtml(m, prev) {
         ${meta.provider || meta.model ? `<span class="model-tag">${esc([meta.provider, meta.model].filter(Boolean).join(' · '))}</span>` : ''}${relay}<span class="time">${fmtTime(m.ts)}</span></div>`}
       ${stepsHtml(m)}
       ${body ? `<div class="bubble md ${m.status === 'streaming' && m.text ? 'streaming' : ''}">${body}</div>` : ''}
+      ${m.changes ? changesHtml(m) : ''}
       ${m.error ? `<div class="err-card">${icon('alert', 16)}<div><b>运行出错</b><pre>${esc(m.error)}</pre></div></div>` : ''}
       ${m.status === 'stopped' ? `<div class="stopped">${icon('stop', 12)} 已停止</div>` : ''}
       ${streaming ? `<div class="msg-actions live">${actBtn('stop', m.queued ? '取消排队' : '停止这条回复')}</div>` : ''}
@@ -347,6 +348,87 @@ function msgHtml(m, prev) {
         ${metaBits.length ? `<span class="meta">${metaBits.map(esc).join(' · ')}</span>` : ''}</div>` : ''}
     </div></div>`;
 }
+// ================= 时光机：文件改动卡片 =================
+const ST = { A: ['新增', 'add'], M: ['修改', 'mod'], D: ['删除', 'del'] };
+const nums = (f) => f.binary ? '<i class="muted">二进制</i>' : `${f.add ? `<i class="plus">+${f.add}</i>` : ''}${f.del ? `<i class="minus">−${f.del}</i>` : ''}`;
+function changesHtml(m) {
+  const c = m.changes;
+  const files = c.files.slice(0, 6);
+  const more = c.total - files.length;
+  const btns = c.expired ? '<span class="muted small">快照已清理</span>'
+    : `<button class="ch-btn" data-ch="diff">${icon('eye', 13)} 查看差异</button>
+       ${c.reverted ? `<button class="ch-btn" data-ch="redo">${icon('redo', 13)} 恢复改动</button>` : `<button class="ch-btn undo" data-ch="undo">${icon('undo', 13)} 撤销改动</button>`}`;
+  return `<div class="changes ${c.reverted ? 'reverted' : ''}">
+    <div class="ch-head">${icon('clock', 14)}<b>${c.reverted ? '已撤销对' : '改动了'} ${c.total} 个文件${c.reverted ? '的改动' : ''}</b>
+      <span class="ch-stat">${nums(c)}</span><span class="grow"></span>${btns}</div>
+    <div class="ch-files">${files.map((f) => `<div class="ch-file" data-ch-file="${esc(f.path)}" title="${c.expired ? '' : '查看这个文件的差异'}">
+      <span class="ch-st st-${ST[f.status]?.[1] || 'mod'}" title="${ST[f.status]?.[0] || ''}">${f.status}</span><span class="ch-path">${esc(f.path)}</span><span class="ch-n">${nums(f)}</span></div>`).join('')}
+      ${more > 0 ? `<div class="ch-file more" data-ch="diff">还有 ${more} 个文件…</div>` : ''}</div></div>`;
+}
+
+/** 差异查看器：左边文件列表，右边带行号的彩色差异 */
+function showDiff(mid, file) {
+  const m = S.messages.find((x) => x.id === mid); if (!m?.changes) return;
+  const c = m.changes;
+  const who = agentById(m.sender)?.name || m.sender;
+  let cur = file || c.files[0]?.path;
+  modal({
+    title: `${who} 的改动 · ${c.total} 个文件`, width: 980,
+    body: `<div class="diff-wrap"><div class="diff-list">${c.files.map((f) => `<button class="diff-item" data-df="${esc(f.path)}">
+        <span class="ch-st st-${ST[f.status]?.[1] || 'mod'}">${f.status}</span><span class="ch-path">${esc(f.path)}</span><span class="ch-n">${nums(f)}</span></button>`).join('')}</div>
+      <div class="diff-main"><div class="diff-bar"><code id="diff-name"></code><span class="grow"></span><button class="btn xs" id="diff-open">${icon('folder', 13)} 打开文件</button></div><div class="diff-view" id="diff-view"></div></div></div>`,
+    onMount: (el) => {
+      const load = async (p) => {
+        cur = p;
+        el.querySelectorAll('[data-df]').forEach((b) => b.classList.toggle('on', b.dataset.df === p));
+        el.querySelector('#diff-name').textContent = p;
+        const f = c.files.find((x) => x.path === p);
+        el.querySelector('#diff-open').disabled = f?.status === 'D' && !c.reverted;
+        const view = el.querySelector('#diff-view');
+        view.innerHTML = '<div class="diff-empty"><span class="spinner"></span></div>';
+        try {
+          const { diff } = await api('GET', `/api/chats/${encodeURIComponent(S.chatId)}/messages/${mid}/diff?path=${encodeURIComponent(p)}`);
+          if (cur === p) view.innerHTML = renderDiff(diff, f);
+        } catch (e) { view.innerHTML = `<div class="diff-empty">${esc(e.message)}</div>`; }
+      };
+      el.querySelector('.diff-list').onclick = (e) => { const b = e.target.closest('[data-df]'); if (b) load(b.dataset.df); };
+      el.querySelector('#diff-open').onclick = () => api('POST', '/api/open', { path: `${c.cwd}/${cur}`, chatId: S.chatId }).catch((er) => toast(er.message, 'error'));
+      if (cur) load(cur);
+    },
+  });
+}
+function renderDiff(text, f) {
+  if (f?.binary) return '<div class="diff-empty">二进制文件，无法显示差异</div>';
+  let o = 0, n = 0;
+  const rows = [];
+  for (const line of text.split('\n')) {
+    if (/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode|old mode|new mode|similarity|Binary files)/.test(line)) continue;
+    const h = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
+    if (h) { o = +h[1]; n = +h[2]; rows.push(`<tr class="hunk"><td></td><td></td><td>${esc(line)}</td></tr>`); continue; }
+    if (line.startsWith('+')) rows.push(`<tr class="add"><td></td><td>${n++}</td><td>${esc(line)}</td></tr>`);
+    else if (line.startsWith('-')) rows.push(`<tr class="del"><td>${o++}</td><td></td><td>${esc(line)}</td></tr>`);
+    else if (line.startsWith('\\')) rows.push(`<tr class="meta"><td></td><td></td><td>${esc(line)}</td></tr>`);
+    else if (line) rows.push(`<tr><td>${o++}</td><td>${n++}</td><td>${esc(line)}</td></tr>`);
+  }
+  return rows.length ? `<table class="diff">${rows.join('')}</table>` : '<div class="diff-empty">没有文本差异（可能只改了权限或是空文件）</div>';
+}
+
+async function revertChanges(mid, redo) {
+  const m = S.messages.find((x) => x.id === mid); if (!m?.changes) return;
+  const who = agentById(m.sender)?.name || m.sender;
+  if (!redo && !(await confirmBox(`撤销 ${who} 这次对 ${m.changes.total} 个文件的改动？这些文件会回到这条回复开始之前的样子，之后还可以再恢复。`, { ok: '撤销改动' }))) return;
+  const url = `/api/chats/${encodeURIComponent(S.chatId)}/messages/${mid}/revert`;
+  try {
+    let r = await api('POST', url, { redo });
+    if (r.conflicts) {
+      const list = r.conflicts.slice(0, 5).join('、') + (r.conflicts.length > 5 ? ` 等 ${r.conflicts.length} 个` : '');
+      if (!(await confirmBox(`${list} 在这之后又被修改过（可能是你或其他 AI 改的）。继续会覆盖这些后来的修改，确定吗？`, { danger: true, ok: '仍然继续' }))) return;
+      r = await api('POST', url, { redo, force: true });
+    }
+    toast(redo ? '已恢复这些改动' : '已撤销，文件回到了之前的样子', 'ok');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 const actBtn = (ic, title) => `<button class="act" data-act="${ic}" title="${title}">${icon(ic, 14)}</button>`;
 
 function sysHtml(m) {
@@ -727,6 +809,15 @@ function bindChat() {
     if (e.target.closest('[data-choose-cwd]')) return chooseCwd(S.chat);
     const fill = e.target.closest('[data-fill]');
     if (fill) { input.value = fill.dataset.fill; autosize(); input.focus(); return; }
+    const ch = e.target.closest('[data-ch], [data-ch-file]');
+    if (ch) {
+      const mid = ch.closest('.msg').id.slice(2);
+      const m = S.messages.find((x) => x.id === mid);
+      if (m?.changes?.expired) return toast('快照已清理，无法查看或撤销');
+      if (ch.dataset.chFile) return showDiff(mid, ch.dataset.chFile);
+      if (ch.dataset.ch === 'diff') return showDiff(mid);
+      return revertChanges(mid, ch.dataset.ch === 'redo');
+    }
     if (e.target.closest('#load-more')) {
       const h = box.scrollHeight;
       shown += PAGE; renderMessages();

@@ -13,6 +13,7 @@ const { baseEnv, which, setGlobalEnv } = require('./env');
 const ext = require('./extensions');
 const { CATALOG, GEMINI_EXTENSIONS, CLAUDE_MARKETPLACES } = require('./mcp-catalog');
 const models = require('./models');
+const snapshots = require('./snapshots');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const VERSION = require('../package.json').version;
@@ -44,7 +45,9 @@ function checkStatus(agent) {
   return new Promise((resolve) => {
     const p = which(agent.bin);
     if (!p) { authCache[agent.id] = null; return resolve((statusCache[agent.id] = { installed: false })); }
-    execFile(p, ['--version'], { env: baseEnv(), timeout: 15000 }, async (err, out, errOut) => {
+    // 自定义 CLI 可能根本不认识 --version，会把它当成任务去执行，所以只检查是否存在
+    if (agent.custom) { authCache[agent.id] = null; return resolve((statusCache[agent.id] = { installed: true, version: '', path: p })); }
+    execFile(p, ['--version'], { env: baseEnv(), cwd: os.homedir(), timeout: 15000 }, async (err, out, errOut) => {
       const raw = stripAnsi(String(out || errOut || '')).trim().split('\n')[0] || '';
       const version = (raw.match(/\d+\.\d+[\w.\-]*/) || [''])[0];
       statusCache[agent.id] = { installed: true, version: version.slice(0, 40), path: p };
@@ -269,6 +272,11 @@ async function runReply(chat, agent, reply, trigger, { raw } = {}) {
 
   const sessions = (chat.sessions ||= {});
   const prompt = raw ? trigger.text : buildPrompt(chat, agent, trigger);
+  // 时光机：开工前给工作目录拍快照，结束后再拍一次，记录这条回复改了哪些文件
+  const cwd = chatCwd(chat);
+  const base = db.settings.snapshots !== false ? await snapshots.take(cwd, `before ${agent.id} ${reply.id}`) : null;
+  // 拍快照期间被停止了：不再启动 CLI
+  if (!running.has(reply.id)) { reply.status = 'stopped'; finish(); return; }
   const exec = (sessionId) => runAgent(agent, {
     prompt, cwd: chatCwd(chat), sessionId, cfg: agentCfg(agent.id), provider: activeProvider(agent.id), settings: db.settings,
     onEvent: (ev) => {
@@ -296,6 +304,15 @@ async function runReply(chat, agent, reply, trigger, { raw } = {}) {
   reply.meta = result.meta;
   reply.status = wasStopped ? 'stopped' : result.error ? 'error' : 'done';
   if (result.error && !wasStopped && result.error.trim() !== reply.text) reply.error = result.error;
+  if (base) {
+    const head = await snapshots.take(cwd, `after ${agent.id} ${reply.id}`);
+    if (head && head !== base) {
+      try {
+        const files = await snapshots.changes(cwd, base, head);
+        if (files.length) reply.changes = { cwd, base, head, files: files.slice(0, 500), total: files.length, add: files.reduce((n, f) => n + f.add, 0), del: files.reduce((n, f) => n + f.del, 0) };
+      } catch (e) { console.error('[snapshot]', e.message); }
+    }
+  }
   if (!finish()) return;
 
   const errText = `${reply.error || ''}\n${reply.text}`;
@@ -572,7 +589,7 @@ const route = (method, pattern, fn) => routes.push({ method, re: new RegExp('^' 
 // 会话列表只需要最后一条消息的预览，不带执行步骤，减小 /api/state 的体积
 function brief(m) {
   if (!m) return null;
-  const { steps, ...rest } = m;
+  const { steps, changes, ...rest } = m;
   return { ...rest, text: clipText(m.text || '', 300) };
 }
 
@@ -695,7 +712,7 @@ route('PUT', '/api/settings', async (_, b) => {
   }
   if (b.maxChain !== undefined) db.settings.maxChain = num(b.maxChain, 0, 10, 3);
   if (b.historyLimit !== undefined) db.settings.historyLimit = num(b.historyLimit, 0, 100, 20);
-  for (const k of ['autoApprove', 'notify', 'askCwd']) if (b[k] !== undefined) db.settings[k] = !!b[k];
+  for (const k of ['autoApprove', 'notify', 'askCwd', 'snapshots']) if (b[k] !== undefined) db.settings[k] = !!b[k];
   store.save(); return db.settings;
 });
 
@@ -756,6 +773,39 @@ route('POST', '/api/chats/:id/stop', async ({ id }, b) => {
   if (b.messageId) return { ok: stopMessage(b.messageId) };
   stopChat(id); return { ok: true };
 });
+// ---------- 时光机：查看 / 撤销某条回复的文件改动 ----------
+function changedMsg(chatId, mid) {
+  const m = msgs(chatId).find((x) => x.id === mid);
+  if (!m?.changes) throw httpErr(404, '这条消息没有记录文件改动');
+  return m;
+}
+route('GET', '/api/chats/:id/messages/:mid/diff', async ({ id, mid }, _b, url) => {
+  const { changes: c } = changedMsg(id, mid);
+  try { return { diff: await snapshots.diff(c.cwd, c.base, c.head, url.searchParams.get('path') || '') }; }
+  catch (e) { throw httpErr(410, '快照已不存在（可能被清理了）：' + e.message); }
+});
+route('POST', '/api/chats/:id/messages/:mid/revert', async ({ id, mid }, b) => {
+  const m = changedMsg(id, mid);
+  const c = m.changes;
+  const undo = !b.redo;
+  if (undo === !!c.reverted) return { ok: true };
+  const paths = c.files.map((f) => f.path);
+  let r;
+  try { r = await snapshots.restore(c.cwd, { target: undo ? c.base : c.head, expect: undo ? c.head : c.base, paths, force: !!b.force }); }
+  catch (e) { throw httpErr(410, '恢复失败：' + e.message); }
+  if (r.conflicts) return { conflicts: r.conflicts };
+  c.reverted = undo;
+  store.save();
+  broadcast('message.update', m);
+  return { ok: true };
+});
+route('POST', '/api/snapshots/clear', async () => {
+  snapshots.clearAll();
+  for (const list of Object.values(db.messages)) for (const m of list) if (m.changes) m.changes.expired = true;
+  store.save(); broadcast('chats.changed', {});
+  return { ok: true };
+});
+
 // 导出聊天记录为 Markdown
 route('GET', '/api/chats/:id/export', async ({ id }) => {
   const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
@@ -770,6 +820,7 @@ route('GET', '/api/chats/:id/export', async ({ id }) => {
     lines.push(`## ${senderName(m)}${m.sender === 'user' ? '' : meta} · ${ts(m.ts)}`, '');
     if (m.text) lines.push(m.text, '');
     if (m.error) lines.push('```text', m.error, '```', '');
+    if (m.changes) lines.push(`_改动了 ${m.changes.total} 个文件（+${m.changes.add} −${m.changes.del}）${m.changes.reverted ? '，已撤销' : ''}：${m.changes.files.slice(0, 20).map((f) => '`' + f.path + '`').join('、')}_`, '');
     if (m.status === 'stopped') lines.push('_（已停止）_', '');
   }
   return { name: `${(chat.type === 'group' ? chat.name : chat.members[0]).replace(/[\\/:*?"<>|]/g, '_')}-${new Date().toLocaleDateString('sv')}.md`, markdown: lines.join('\n') };

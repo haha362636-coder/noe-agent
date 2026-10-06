@@ -147,6 +147,9 @@ export function modal({ title, body, actions = [], width = 460, onMount }) {
   wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   setTimeout(() => wrap.classList.add('show'), 10);
   onMount?.(wrap, close);
+  // 让对话框拿到焦点，Esc 才能关闭（里面没有输入框时焦点还留在页面上）
+  wrap.tabIndex = -1;
+  if (!wrap.contains(document.activeElement)) wrap.focus({ preventScroll: true });
   return { el: wrap, close };
 }
 
@@ -222,6 +225,8 @@ const P = {
   database: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   puzzle: '<path d="M10 3h4v2a2 2 0 1 0 4 0V3h3v7h-2a2 2 0 1 0 0 4h2v7h-7v-2a2 2 0 1 0-4 0v2H3v-7h2a2 2 0 1 0 0-4H3V3z"/>',
   plug: '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
   wifi: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0M12 20h.01"/>',
 };
 export function icon(name, size = 18) {

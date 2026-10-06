@@ -14,6 +14,7 @@ const defaults = () => ({
     historyLimit: 20,     // 群聊里带给 AI 的最近消息条数
     notify: true,         // AI 回复完成时发系统通知
     askCwd: true,         // 新会话第一次发消息前先选择工作目录
+    snapshots: true,      // 时光机：记录每条 AI 回复改了哪些文件，可一键撤销
     recentDirs: [],       // 最近使用的工作目录
   },
   providers: [],          // 模型厂商 { id, preset, name, color, apiKey, urls: {anthropic, openai, gemini}, models: [], smallModel, note }

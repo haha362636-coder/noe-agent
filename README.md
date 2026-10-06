@@ -6,7 +6,7 @@
 
 **把各种 AI 编程助手装进一个聊天软件：一键安装、多厂商 API 管理、私聊任意 AI，或把多个 AI 拖进群里，@ 谁就谁来干活。**
 
-![版本](https://img.shields.io/badge/version-0.2.0--beta.2-orange)
+![版本](https://img.shields.io/badge/version-0.2.0--beta.3-orange)
 ![平台](https://img.shields.io/badge/platform-macOS%20(Apple%20%2F%20Intel)-lightgrey)
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
@@ -41,6 +41,7 @@ xattr -cr "/Applications/Noe Agent.app"
 - **一键切换**：每个 AI 可以在「官方登录」和任意厂商 API 之间随时切换（工具卡片、聊天顶部、或 `/use`）。
 - **模型选择**：内置最新模型目录（Claude Fable 5.1 / Opus 5.5 / Sonnet 5.5、Gemini 3.8 Flash 等，Codex 实时读取最新列表如 GPT-6.1 Sol / GPT-6 Astra），可搜索、可输入任意模型；Claude Code 与 Codex 可选思考强度。`/model opus 5.5`、`/model gpt-6` 模糊匹配。
 - **聊天与群聊**：私聊任意 AI；把 AI 拖进群里用 @ 分派任务，AI 之间还能互相 @ 接力；Markdown 与代码高亮、执行过程时间线、耗时 / token / 费用统计。
+- **时光机**：每条 AI 回复都会记录改了哪些文件，可以看差异、一键撤销 / 恢复，对所有 AI 通用（快照独立保存，不影响项目自己的 Git）。
 - **工作目录**：新会话先选项目文件夹，AI 做出来的文件就在你知道的地方；回复里的文件链接一点就用默认程序打开。
 - **/ 命令**：`/help /login /logout /use /model /effort /status /terminal /shell /new /clear /stop /cwd /invite /kick /rename`；需要交互界面的命令（如 Claude 的 `/config`、`/mcp`）自动在内置终端打开。
 - **内置终端**：真实伪终端，用于官方账号登录、交互式命令和续接会话（⌘J）。
@@ -80,6 +81,7 @@ server/models.js      模型目录、思考强度、/model 模糊匹配
 server/extensions.js  MCP 与插件：读写各 CLI 的配置、调用官方命令
 server/mcp-catalog.js 推荐 MCP、Gemini 扩展、Claude 插件市场
 server/pty.js         内置终端；pty_bridge.py 提供伪终端
+server/snapshots.js   时光机：用独立的影子 Git 仓库给工作目录拍快照、对比、撤销
 server/store.js       数据保存在 ~/.noe-agent/data.json（仅本机，权限 600）
 public/               界面（原生 HTML / CSS / JS）
 public/vendor/        打包好的 marked、DOMPurify、highlight.js、xterm（npm run build:vendor 重新生成）
