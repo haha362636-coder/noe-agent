@@ -4,6 +4,7 @@ const { StringDecoder } = require('string_decoder');
 const path = require('path');
 const crypto = require('crypto');
 const { baseEnv, which, resolveCommand } = require('./env');
+const { t } = require('./i18n');
 
 const BRIDGE = path.join(__dirname, 'pty_bridge.py').replace('app.asar', 'app.asar.unpacked');
 const terms = new Map();
@@ -27,17 +28,17 @@ function open(opts) {
   const proc = process.platform === 'win32' ? winPty(argv, { cols, rows, cwd: opts.cwd, env }) : spawn(process.env.NOE_PYTHON || 'python3', [BRIDGE, String(cols), String(rows), ...argv], {
     cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
-  const t = {
+  const term = {
     id, proc, title: opts.title || argv.join(' '), chatId: opts.chatId || null, agentId: opts.agentId || null,
     kind: opts.kind || 'cli', buffer: '', exited: false, code: null, createdAt: Date.now(),
   };
-  terms.set(id, t);
+  terms.set(id, term);
   const dec = new StringDecoder('utf8');
   let typed = !opts.typeAfter, quietTimer = null;
   const push = (data) => {
     // 输出很密集时（如 npm 安装日志）每次拼接 20 万字符的字符串很浪费，攒到两倍上限再裁剪
-    t.buffer += data;
-    if (t.buffer.length > 400000) t.buffer = t.buffer.slice(-200000);
+    term.buffer += data;
+    if (term.buffer.length > 400000) term.buffer = term.buffer.slice(-200000);
     emit('term.data', { id, data });
     if (!typed) {
       clearTimeout(quietTimer);
@@ -46,16 +47,16 @@ function open(opts) {
   };
   proc.stdout.on('data', (c) => push(dec.write(c)));
   proc.stderr.on('data', (c) => push(c.toString()));
-  proc.on('error', (e) => push(`\r\n\x1b[31m无法启动终端：${e.message}\x1b[0m\r\n`));
+  proc.on('error', (e) => push(`\r\n\x1b[31m${t('无法启动终端：')}${e.message}\x1b[0m\r\n`));
   proc.on('close', (code) => {
-    t.exited = true; t.code = code;
+    term.exited = true; term.code = code;
     clearTimeout(quietTimer);
-    push(`\r\n\x1b[2m[进程已结束，退出码 ${code}]\x1b[0m\r\n`);
+    push(`\r\n\x1b[2m[${t('进程已结束，退出码 {code}', { code })}]\x1b[0m\r\n`);
     emit('term.exit', { id, code });
-    opts.onExit?.(code, t);
+    opts.onExit?.(code, term);
   });
-  emit('term.open', summary(t));
-  return t;
+  emit('term.open', summary(term));
+  return term;
 }
 
 // 把 node-pty 包装成和 pty_bridge 子进程一样的形状：stdout/stderr 事件、stdin.write、stdio[3] 调整尺寸、kill、close

@@ -14,12 +14,16 @@ const ext = require('./extensions');
 const { CATALOG, GEMINI_EXTENSIONS, CLAUDE_MARKETPLACES } = require('./mcp-catalog');
 const models = require('./models');
 const snapshots = require('./snapshots');
+const i18n = require('./i18n');
+const { t, join } = i18n;
+const { createArena } = require('./arena');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const VERSION = require('../package.json').version;
 const db = store.load();
 const uid = () => crypto.randomBytes(6).toString('hex');
 setGlobalEnv(db.mcpEnv ||= {});
+i18n.use(() => db.settings.lang);
 
 // ---------- SSE ----------
 const clients = new Set();
@@ -78,9 +82,9 @@ function publicAgent(a) {
 function authLabel(agent) {
   const cfg = agentCfg(agent.id);
   const p = activeProvider(agent.id);
-  const src = p ? `厂商「${p.name}」` : agent.officialLabel || '官方登录';
-  const model = cfg.model || (p ? p.models?.[0] : '') || '默认模型';
-  const effort = cfg.effort ? ` · 思考强度 ${models.EFFORT_LABEL[cfg.effort] || cfg.effort}` : '';
+  const src = p ? t('厂商「{name}」', { name: p.name }) : t(agent.officialLabel || '官方登录');
+  const model = cfg.model || (p ? p.models?.[0] : '') || t('默认模型');
+  const effort = cfg.effort ? ` · ${t('思考强度')} ${t(models.EFFORT_LABEL[cfg.effort] || cfg.effort)}` : '';
   return `${src} · ${agent.noModel ? '' : model}${effort}`.replace(/ · $/, '');
 }
 
@@ -100,7 +104,7 @@ function runShell(agentId, cmd, label) {
   const finish = async (code, err) => {
     delete installs[agentId];
     await checkStatus(getAgent(agentId));
-    broadcast('install.log', { agentId, line: err ? `\n✗ ${err.message}\n` : code === 0 ? `\n✓ ${label}完成\n` : `\n✗ ${label}失败（退出码 ${code}）\n` });
+    broadcast('install.log', { agentId, line: err ? `\n✗ ${err.message}\n` : code === 0 ? `\n✓ ${t('{label}完成', { label: t(label) })}\n` : `\n✗ ${t('{label}失败（退出码 {code}）', { label: t(label), code })}\n` });
     broadcast('install.done', { agentId, ok: code === 0 && !err, label });
     broadcast('agents.changed', {});
   };
@@ -112,19 +116,19 @@ function runShell(agentId, cmd, label) {
 // ---------- 内置终端 ----------
 function openLogin(agent, chatId, logout = false) {
   const argv = logout ? agent.logoutCmd : agent.loginCmd;
-  if (!argv) throw httpErr(400, `${agent.name} 不支持${logout ? '退出登录' : '账号登录'}`);
-  if (!which(agent.bin)) throw httpErr(400, `${agent.name} 还没有安装`);
+  if (!argv) throw httpErr(400, t(logout ? '{name} 不支持退出登录' : '{name} 不支持账号登录', { name: agent.name }));
+  if (!which(agent.bin)) throw httpErr(400, t('{name} 还没有安装', { name: agent.name }));
   // 登录走官方通道：用干净环境，避免第三方 Key 干扰
   const env = resolveAuth(agent, { mode: 'official', extraEnv: agentCfg(agent.id).extraEnv }).env;
   return pty.open({
     argv, env, cwd: os.homedir(), chatId, agentId: agent.id, kind: logout ? 'logout' : 'login',
-    title: `${agent.name} · ${logout ? '退出登录' : '登录'}`,
+    title: `${agent.name} · ${t(logout ? '退出登录' : '登录')}`,
     onExit: async () => {
       await refreshAgent(agent.id);
       const auth = authCache[agent.id];
       if (chatId) {
-        const state = auth ? (auth.loggedIn ? `✅ ${agent.name} 已登录（${auth.detail}）` : `${agent.name} 当前未登录`) : `${agent.name} 的${logout ? '退出' : '登录'}流程已结束`;
-        const hint = !logout && auth?.loggedIn && agentCfg(agent.id).mode === 'provider' ? `。当前仍在使用厂商 API，输入 /use official @${agent.id} 切换到官方登录` : '';
+        const state = auth ? (auth.loggedIn ? `✅ ${t('{name} 已登录（{detail}）', { name: agent.name, detail: t(auth.detail) })}` : t('{name} 当前未登录', { name: agent.name })) : t(logout ? '{name} 的退出流程已结束' : '{name} 的登录流程已结束', { name: agent.name });
+        const hint = !logout && auth?.loggedIn && agentCfg(agent.id).mode === 'provider' ? t('。当前仍在使用厂商 API，输入 /use official @{id} 切换到官方登录', { id: agent.id }) : '';
         addMessage(chatId, { sender: 'system', text: state + hint });
       }
     },
@@ -132,13 +136,13 @@ function openLogin(agent, chatId, logout = false) {
 }
 
 function openAgentTerminal(agent, chat, { initial, typeAfter } = {}) {
-  if (!which(agent.bin)) throw httpErr(400, `${agent.name} 还没有安装`);
+  if (!which(agent.bin)) throw httpErr(400, t('{name} 还没有安装', { name: agent.name }));
   const cfg = agentCfg(agent.id);
   const auth = resolveAuth(agent, cfg, activeProvider(agent.id));
   const argv = interactiveArgv(agent, { sessionId: chat?.sessions?.[agent.id], initial, preArgs: auth.preArgs, model: agent.noModel ? '' : auth.model, effort: cfg.effort });
   return pty.open({
     argv, env: auth.env, cwd: chat ? chatCwd(chat) : os.homedir(), chatId: chat?.id, agentId: agent.id, kind: 'cli',
-    title: `${agent.name}${initial || typeAfter ? ' · ' + (initial || typeAfter) : ' · 交互终端'}`, typeAfter,
+    title: `${agent.name} · ${initial || typeAfter || t('交互终端')}`, typeAfter,
   });
 }
 
@@ -146,7 +150,7 @@ function openShell(chat) {
   const argv = process.platform === 'win32'
     ? (which('pwsh') ? ['pwsh', '-NoLogo'] : ['powershell.exe', '-NoLogo'])
     : [process.env.SHELL || '/bin/zsh', '-l'];
-  return pty.open({ argv, env: baseEnv(), cwd: chat ? chatCwd(chat) : os.homedir(), chatId: chat?.id, kind: 'shell', title: `终端 · ${chat ? path.basename(chatCwd(chat)) : '~'}` });
+  return pty.open({ argv, env: baseEnv(), cwd: chat ? chatCwd(chat) : os.homedir(), chatId: chat?.id, kind: 'shell', title: `${t('终端')} · ${chat ? path.basename(chatCwd(chat)) : '~'}` });
 }
 
 // ---------- 聊天 ----------
@@ -203,7 +207,7 @@ function parseMentions(text, chat, exclude) {
 }
 
 function senderName(m) {
-  if (m.sender === 'user') return '用户';
+  if (m.sender === 'user') return t('用户');
   return getAgent(m.sender)?.name || m.sender;
 }
 
@@ -212,18 +216,18 @@ function buildPrompt(chat, agent, trigger) {
     if (agent.resumable && chat.sessions?.[agent.id]) return trigger.text;
     const hist = msgs(chat.id).filter((m) => m.id !== trigger.id && m.status !== 'streaming' && m.text && m.sender !== 'system' && !m.command).slice(-8);
     if (!hist.length) return trigger.text;
-    return `以下是我们之前的对话：\n${hist.map((m) => `[${senderName(m)}]: ${clipText(m.text, 1500)}`).join('\n')}\n\n---\n用户的新消息：\n${trigger.text}`;
+    return `${t('以下是我们之前的对话：')}\n${hist.map((m) => `[${senderName(m)}]: ${clipText(m.text, 1500)}`).join('\n')}\n\n---\n${t('用户的新消息：')}\n${trigger.text}`;
   }
   const members = chat.members.map(getAgent).filter(Boolean);
   const limit = db.settings.historyLimit ?? 20;
   const hist = limit ? msgs(chat.id).filter((m) => m.id !== trigger.id && m.status !== 'streaming' && m.text && m.sender !== 'system' && !m.command).slice(-limit) : [];
   return [
-    `你是 ${agent.name}（群内 ID：@${agent.id}），正在群聊「${chat.name}」中与用户以及其他 AI 助手协作完成任务。`,
-    `群成员：用户、${members.map((a) => `@${a.id}（${a.name}）`).join('、')}。`,
-    `所有成员共享同一个工作目录：${chatCwd(chat)}`,
-    hist.length ? `\n最近的群聊记录：\n${hist.map((m) => `[${senderName(m)}]: ${clipText(m.text, 2000)}`).join('\n')}` : '',
-    `\n---\n现在 ${senderName(trigger)} @了你：\n${trigger.text}`,
-    `\n请直接完成交给你的部分，回复会发到群里。提到你创建或修改的文件时请写出完整的绝对路径，方便用户点击打开。如果需要其他成员接手或协助，在回复中 @对方ID 并写清楚具体任务；不需要时不要 @ 别人。`,
+    t('你是 {name}（群内 ID：@{id}），正在群聊「{chat}」中与用户以及其他 AI 助手协作完成任务。', { name: agent.name, id: agent.id, chat: chat.name }),
+    t('群成员：用户、{list}。', { list: join(members.map((a) => `@${a.id}（${a.name}）`)) }),
+    t('所有成员共享同一个工作目录：{dir}', { dir: chatCwd(chat) }),
+    hist.length ? `\n${t('最近的群聊记录：')}\n${hist.map((m) => `[${senderName(m)}]: ${clipText(m.text, 2000)}`).join('\n')}` : '',
+    `\n---\n${t('现在 {who} @了你：', { who: senderName(trigger) })}\n${trigger.text}`,
+    `\n${t('请直接完成交给你的部分，回复会发到群里。提到你创建或修改的文件时请写出完整的绝对路径，方便用户点击打开。如果需要其他成员接手或协助，在回复中 @对方ID 并写清楚具体任务；不需要时不要 @ 别人。')}`,
   ].join('\n');
 }
 function clipText(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
@@ -242,7 +246,7 @@ async function dispatch(chat, agentId, trigger, depth, { raw } = {}) {
   if (!agent) return;
   const key = `${chat.id}:${agent.id}`;
   const prev = lanes.get(key);
-  const reply = addMessage(chat.id, { sender: agent.id, text: '', status: 'streaming', ...(prev ? { queued: true } : {}), replyTo: trigger.id, meta: { provider: activeProvider(agent.id)?.name || '官方登录' } });
+  const reply = addMessage(chat.id, { sender: agent.id, text: '', status: 'streaming', ...(prev ? { queued: true } : {}), replyTo: trigger.id, meta: { provider: activeProvider(agent.id)?.name || t('官方登录') } });
   running.set(reply.id, { proc: null, chatId: chat.id });
   broadcast('chats.busy', { chatId: chat.id, busy: true });
   let release;
@@ -327,10 +331,10 @@ async function runReply(chat, agent, reply, trigger, { raw } = {}) {
   const errText = `${reply.error || ''}\n${reply.text}`;
   // 交互式命令在无头模式下不可用：自动转到内置终端
   if (raw && /isn't available in this environment|not available in this environment/i.test(errText)) {
-    const t = openAgentTerminal(agent, chat, { initial: trigger.text });
-    addMessage(chat.id, { sender: 'system', text: `${trigger.text} 需要交互界面，已在内置终端中打开`, term: t.id });
+    const term = openAgentTerminal(agent, chat, { initial: trigger.text });
+    addMessage(chat.id, { sender: 'system', text: t('{cmd} 需要交互界面，已在内置终端中打开', { cmd: trigger.text }), term: term.id });
   } else if (/not logged in|please run \/login|invalid api key|authentication|认证失败|401/i.test(errText) && reply.status === 'error') {
-    addMessage(chat.id, { sender: 'system', text: `${agent.name} 认证失败。输入 /login @${agent.id} 登录官方账号，或 /use <厂商名> @${agent.id} 改用 API 厂商。`, actions: [{ label: '立即登录', cmd: `/login @${agent.id}` }, { label: '配置厂商', goto: 'providers' }] });
+    addMessage(chat.id, { sender: 'system', text: t('{name} 认证失败。输入 /login @{id} 登录官方账号，或 /use <厂商名> @{id} 改用 API 厂商。', { name: agent.name, id: agent.id }), actions: [{ label: t('立即登录'), cmd: `/login @${agent.id}` }, { label: t('配置厂商'), goto: 'providers' }] });
   }
 }
 
@@ -341,7 +345,7 @@ async function onUserMessage(chat, text) {
   else {
     targets = parseMentions(text, chat);
     if (!targets.length) {
-      addMessage(chat.id, { sender: 'system', text: '在群里用 @成员 指派任务，例如 “@claude 写接口，@codex 写测试”，或 @所有人。' });
+      addMessage(chat.id, { sender: 'system', text: t('在群里用 @成员 指派任务，例如 “@claude 写接口，@codex 写测试”，或 @所有人。') });
       return;
     }
   }
@@ -352,15 +356,22 @@ function stopChat(chatId) {
   for (const [id, r] of running) if (r.chatId === chatId) { running.delete(id); try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ } }
 }
 function stopMessage(msgId) {
-  const r = running.get(msgId); if (!r) return false;
-  running.delete(msgId);
-  try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ }
-  return true;
+  let hit = false;
+  // 擂台的每位选手各占一项（key 为 消息ID:选手ID），停止擂台就把它们一起停掉
+  for (const [id, r] of running) {
+    if (id !== msgId && r.arena !== msgId) continue;
+    running.delete(id); hit = true;
+    try { r.proc?.kill('SIGTERM'); } catch { /* 已退出 */ }
+  }
+  return hit;
 }
+
+const arena = createArena({ db, store, broadcast, addMessage, msgs, getAgent, agentCfg, activeProvider, chatCwd, running, chatBusy, senderName, clipText });
 
 // ---------- / 命令 ----------
 const COMMANDS = [
   { name: 'help', desc: '查看所有命令' },
+  { name: 'arena', args: '<任务> [@成员 …]', desc: 'AI 擂台：多个 AI 在各自的项目副本里同时完成同一个任务，盲评选出最佳方案一键采用' },
   { name: 'login', args: '[@成员]', desc: '在内置终端登录官方账号' },
   { name: 'logout', args: '[@成员]', desc: '退出官方账号' },
   { name: 'use', args: '<厂商|official> [@成员]', desc: '切换 API 来源：官方登录或某个模型厂商' },
@@ -377,6 +388,7 @@ const COMMANDS = [
   { name: 'kick', args: '@成员 …', desc: '把 AI 移出群聊', group: true },
   { name: 'rename', args: '<群名>', desc: '修改群名称', group: true },
 ];
+const tc = (c) => ({ ...c, desc: t(c.desc), args: c.args && t(c.args) });
 
 function sys(chat, text, extra) { addMessage(chat.id, { sender: 'system', text, ...extra }); }
 
@@ -391,6 +403,29 @@ function commandTargets(chat, args, { requireOne } = {}) {
 }
 const stripMentions = (s) => s.replace(/@[\w一-龥-]+/g, '').trim();
 
+/**
+ * 擂台选手：群聊里是 @ 到的成员（没 @ 就是全体成员），私聊里是当前 AI 加上 @ 到的其他 AI。
+ * 只算已安装的，至少两位。
+ */
+function arenaContestants(chat, args, ids) {
+  let list = ids?.length ? ids : null;
+  if (!list) {
+    const any = [...args.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase()).filter((id) => getAgent(id));
+    const mentioned = chat.type === 'group' ? parseMentions(args, chat) : [];
+    list = chat.type === 'group'
+      ? (mentioned.length ? mentioned : any.length ? any : chat.members)
+      : [...chat.members, ...any];
+  }
+  return [...new Set(list)].map(getAgent).filter((a) => a && statusCache[a.id]?.installed).slice(0, 8);
+}
+async function startArena(chat, task, contestants, opts) {
+  if (!task) throw httpErr(400, t('请写上擂台的任务，例如 /arena 给首页加一个深色模式切换'));
+  if (contestants.length < 2) throw httpErr(400, t('擂台至少需要两位已安装的 AI。群聊里会让所有成员参赛；私聊里请 @ 其他 AI 一起，例如 /arena 写一个排序函数 @codex'));
+  // 从界面的「发起擂台」对话框发起时，在聊天里补一条命令记录
+  if (opts?.echo) addMessage(chat.id, { sender: 'user', text: `/arena ${task} ${contestants.map((a) => '@' + a.id).join(' ')}`, command: true });
+  arena.start(chat, contestants, task, opts).catch((e) => { console.error(e); sys(chat, '⚠ ' + e.message); });
+}
+
 async function onCommand(chat, text) {
   const m = text.match(/^\/([\w:-]+)\s*([\s\S]*)$/);
   if (!m) return onUserMessage(chat, text);
@@ -401,47 +436,57 @@ async function onCommand(chat, text) {
 
   const needTarget = (verb) => {
     const ts = commandTargets(chat, args);
-    if (!ts.length) { sys(chat, `请指定成员，例如 /${verb} @${chat.members[0] || 'claude'}`); return null; }
+    if (!ts.length) { sys(chat, t('请指定成员，例如 /{verb} @{id}', { verb, id: chat.members[0] || 'claude' })); return null; }
     return ts;
   };
 
   switch (name) {
     case 'help': {
-      const lines = COMMANDS.filter((c) => !c.group || chat.type === 'group').map((c) => `\`/${c.name}${c.args ? ' ' + c.args : ''}\` — ${c.desc}`);
-      sys(chat, `**可用命令**\n${lines.map((l) => '- ' + l).join('\n')}\n\n其他以 / 开头的命令会交给 AI 自己的 CLI 执行（如 Claude Code 的 /init、/review，或需要交互界面的 /config、/mcp 会自动在内置终端打开）。`, { markdown: true });
+      const lines = COMMANDS.filter((c) => !c.group || chat.type === 'group').map(tc).map((c) => `\`/${c.name}${c.args ? ' ' + c.args : ''}\` — ${c.desc}`);
+      sys(chat, `**${t('可用命令')}**\n${lines.map((l) => '- ' + l).join('\n')}\n\n${t('其他以 / 开头的命令会交给 AI 自己的 CLI 执行（如 Claude Code 的 /init、/review，或需要交互界面的 /config、/mcp 会自动在内置终端打开）。')}`, { markdown: true });
+      return;
+    }
+    case 'arena': {
+      const task = stripMentions(args);
+      if (!task) {
+        const board = arena.leaderboard();
+        sys(chat, `**⚔ ${t('AI 擂台')}**\n\n${t('用法：/arena <任务>。群聊里所有成员（或 @ 到的成员）同时参赛，私聊里 @ 其他 AI 一起参赛。每位选手在自己的项目副本里干活，互不干扰；你盲评选出最佳方案后，它的改动才会合并进工作目录。')}${board ? `\n\n**${t('排行榜')}**\n\n${board}` : ''}`, { markdown: true });
+        return;
+      }
+      try { await startArena(chat, task, arenaContestants(chat, args)); } catch (e) { sys(chat, '⚠ ' + e.message); }
       return;
     }
     case 'login': case 'logout': {
       const ts = needTarget(name); if (!ts) return;
       for (const a of ts) {
         try {
-          const t = openLogin(a, chat.id, name === 'logout');
-          sys(chat, `已在内置终端打开 ${a.name} 的${name === 'login' ? '登录' : '退出登录'}流程${name === 'login' ? '，按终端提示操作（通常会打开浏览器授权）' : ''}`, { term: t.id });
+          const term = openLogin(a, chat.id, name === 'logout');
+          sys(chat, name === 'login' ? t('已在内置终端打开 {name} 的登录流程，按终端提示操作（通常会打开浏览器授权）', { name: a.name }) : t('已在内置终端打开 {name} 的退出登录流程', { name: a.name }), { term: term.id });
         } catch (e) { sys(chat, `⚠ ${e.message}`); }
       }
       return;
     }
     case 'use': {
-      const ts = needTarget('use 厂商名'); if (!ts) return;
+      const ts = needTarget(t('use 厂商名')); if (!ts) return;
       const q = stripMentions(args).toLowerCase();
       if (!q) {
-        const list = db.providers.map((p) => `「${p.name}」`).join('、') || '（还没有添加厂商）';
-        sys(chat, `用法：/use official 或 /use <厂商名>。已添加的厂商：${list}`);
+        const list = join(db.providers.map((p) => `「${p.name}」`)) || t('（还没有添加厂商）');
+        sys(chat, t('用法：/use official 或 /use <厂商名>。已添加的厂商：{list}', { list }));
         return;
       }
       for (const a of ts) {
         const cfg = agentCfg(a.id);
         if (['official', '官方', '官方登录', 'default'].includes(q)) {
           cfg.mode = 'official';
-          sys(chat, `${a.name} 已切换到 ${a.officialLabel || '官方登录'}`);
+          sys(chat, t('{name} 已切换到 {target}', { name: a.name, target: t(a.officialLabel || '官方登录') }));
           continue;
         }
         const p = db.providers.find((x) => x.id === q || x.name.toLowerCase() === q) || db.providers.find((x) => x.name.toLowerCase().includes(q) || (x.preset || '').includes(q));
-        if (!p) { sys(chat, `没有找到厂商「${q}」，先到「模型厂商」页面添加`, { actions: [{ label: '去添加', goto: 'providers' }] }); return; }
-        if (!supports(a, p)) { sys(chat, `${a.name} 需要 ${a.protocols.map((x) => PROTOCOLS[x]).join('/')} 地址，厂商「${p.name}」没有配置`); continue; }
+        if (!p) { sys(chat, t('没有找到厂商「{q}」，先到「模型厂商」页面添加', { q }), { actions: [{ label: t('去添加'), goto: 'providers' }] }); return; }
+        if (!supports(a, p)) { sys(chat, t('{name} 需要 {proto} 地址，厂商「{p}」没有配置', { name: a.name, proto: a.protocols.map((x) => t(PROTOCOLS[x])).join('/'), p: p.name })); continue; }
         cfg.mode = 'provider'; cfg.providerId = p.id;
         if (cfg.model && p.models?.length && !p.models.includes(cfg.model)) cfg.model = '';
-        sys(chat, `${a.name} 已切换到厂商「${p.name}」· 模型 ${cfg.model || p.models?.[0] || '默认'}`);
+        sys(chat, t('{name} 已切换到厂商「{p}」· 模型 {model}', { name: a.name, p: p.name, model: cfg.model || p.models?.[0] || t('默认') }));
       }
       store.save(); broadcast('agents.changed', {});
       return;
@@ -457,21 +502,21 @@ async function onCommand(chat, text) {
           if (a && !a.noModel && models.resolveModel(query, modelCandidates(a, cat)).match) { ts = [a]; break; }
         }
       }
-      if (!ts.length) { sys(chat, `请指定成员，例如 /model ${query || 'opus'} @${chat.members[0] || 'claude'}`); return; }
+      if (!ts.length) { sys(chat, t('请指定成员，例如 /model {q} @{id}', { q: query || 'opus', id: chat.members[0] || 'claude' })); return; }
       const cat = await models.catalog();
       for (const a of ts) {
-        if (a.noModel) { sys(chat, `${a.name} 不支持在 Noe 里切换模型`); continue; }
+        if (a.noModel) { sys(chat, t('{name} 不支持在 Noe 里切换模型', { name: a.name })); continue; }
         const cands = modelCandidates(a, cat);
         if (!query) {
-          sys(chat, `**${a.name}** 当前：${authLabel(a)}\n\n可选：${cands.slice(0, 12).map((m) => `\`${m.id}\``).join('、') || '（自定义输入）'}`, { markdown: true });
+          sys(chat, `**${a.name}** ${t('当前：')}${authLabel(a)}\n\n${t('可选：')}${join(cands.slice(0, 12).map((m) => `\`${m.id}\``)) || t('（自定义输入）')}`, { markdown: true });
           continue;
         }
-        if (['default', '默认'].includes(query.toLowerCase())) { agentCfg(a.id).model = ''; sys(chat, `${a.name} 已恢复默认模型`); continue; }
+        if (['default', '默认'].includes(query.toLowerCase())) { agentCfg(a.id).model = ''; sys(chat, t('{name} 已恢复默认模型', { name: a.name })); continue; }
         const { match, others } = models.resolveModel(query, cands);
         const id = match ? match.id : query.replace(/\s+/g, '-');
         agentCfg(a.id).model = id;
-        const more = others.length ? `（其他相近的：${others.map((m) => m.id).join('、')}）` : '';
-        sys(chat, match ? `${a.name} 已切换到 ${match.name || match.id}（${match.id}）${more}` : `${a.name} 的目录里没有「${query}」，已按原样使用模型 ${id}`);
+        const more = others.length ? t('（其他相近的：{list}）', { list: join(others.map((m) => m.id)) }) : '';
+        sys(chat, match ? t('{name} 已切换到 {model}（{id}）', { name: a.name, model: match.name || match.id, id: match.id }) + more : t('{name} 的目录里没有「{q}」，已按原样使用模型 {id}', { name: a.name, q: query, id }));
       }
       store.save(); broadcast('agents.changed', {});
       return;
@@ -481,12 +526,13 @@ async function onCommand(chat, text) {
       const v = stripMentions(args).toLowerCase();
       const map = { 低: 'low', 中: 'medium', 高: 'high', 超高: 'xhigh', 最大: 'max', 默认: '' };
       const level = map[v] ?? v;
+      const label = (e) => t(models.EFFORT_LABEL[e] || '默认');
       for (const a of ts) {
-        if (!['claude', 'codex'].includes(a.id)) { sys(chat, `${a.name} 不支持设置思考强度`); continue; }
-        if (!v) { sys(chat, `${a.name} 当前思考强度：${models.EFFORT_LABEL[agentCfg(a.id).effort] || '默认'}`); continue; }
-        if (level && level !== 'default' && !models.EFFORT_LABEL[level]) { sys(chat, '可选：low / medium / high / xhigh / max / default'); return; }
+        if (!['claude', 'codex'].includes(a.id)) { sys(chat, t('{name} 不支持设置思考强度', { name: a.name })); continue; }
+        if (!v) { sys(chat, t('{name} 当前思考强度：{level}', { name: a.name, level: label(agentCfg(a.id).effort) })); continue; }
+        if (level && level !== 'default' && !models.EFFORT_LABEL[level]) { sys(chat, t('可选：low / medium / high / xhigh / max / default')); return; }
         agentCfg(a.id).effort = level === 'default' ? '' : level;
-        sys(chat, `${a.name} 的思考强度已设为 ${models.EFFORT_LABEL[agentCfg(a.id).effort] || '默认'}`);
+        sys(chat, t('{name} 的思考强度已设为 {level}', { name: a.name, level: label(agentCfg(a.id).effort) }));
       }
       store.save(); broadcast('agents.changed', {});
       return;
@@ -496,44 +542,46 @@ async function onCommand(chat, text) {
       await Promise.all(ts.map(checkStatus));
       const rows = ts.map((a) => {
         const st = statusCache[a.id]; const au = authCache[a.id];
-        const inst = st?.installed ? `v${st.version || '?'}` : '未安装';
-        const login = au ? (au.loggedIn ? `已登录（${au.detail}）` : '未登录') : '—';
+        const inst = st?.installed ? `v${st.version || '?'}` : t('未安装');
+        const login = au ? (au.loggedIn ? t('已登录（{detail}）', { detail: t(au.detail) }) : t('未登录')) : '—';
         return `| ${a.name} | ${inst} | ${login} | ${authLabel(a)} |`;
       });
-      sys(chat, `| 成员 | 版本 | 官方账号 | 当前使用 |\n|---|---|---|---|\n${rows.join('\n')}\n\n工作目录：\`${chatCwd(chat)}\``, { markdown: true });
+      sys(chat, `| ${t('成员')} | ${t('版本')} | ${t('官方账号')} | ${t('当前使用')} |\n|---|---|---|---|\n${rows.join('\n')}\n\n${t('工作目录：')}\`${chatCwd(chat)}\``, { markdown: true });
       broadcast('agents.changed', {});
       return;
     }
     case 'terminal': {
       const ts = commandTargets(chat, args, { requireOne: true });
-      if (!ts.length) { sys(chat, `请指定成员，例如 /terminal @${chat.members[0] || 'claude'}`); return; }
-      try { const t = openAgentTerminal(ts[0], chat); sys(chat, `已打开 ${ts[0].name} 的交互式终端${chat.sessions?.[ts[0].id] ? '（续接当前会话）' : ''}`, { term: t.id }); }
-      catch (e) { sys(chat, `⚠ ${e.message}`); }
+      if (!ts.length) { sys(chat, t('请指定成员，例如 /terminal @{id}', { id: chat.members[0] || 'claude' })); return; }
+      try {
+        const term = openAgentTerminal(ts[0], chat);
+        sys(chat, chat.sessions?.[ts[0].id] ? t('已打开 {name} 的交互式终端（续接当前会话）', { name: ts[0].name }) : t('已打开 {name} 的交互式终端', { name: ts[0].name }), { term: term.id });
+      } catch (e) { sys(chat, `⚠ ${e.message}`); }
       return;
     }
-    case 'shell': { const t = openShell(chat); sys(chat, '已在工作目录打开终端', { term: t.id }); return; }
-    case 'new': { stopChat(chat.id); chat.sessions = {}; store.save(); sys(chat, '已开启新会话，AI 不会再记得之前的上下文'); return; }
+    case 'shell': { const term = openShell(chat); sys(chat, t('已在工作目录打开终端'), { term: term.id }); return; }
+    case 'new': { stopChat(chat.id); chat.sessions = {}; store.save(); sys(chat, t('已开启新会话，AI 不会再记得之前的上下文')); return; }
     case 'clear': { stopChat(chat.id); db.messages[chat.id] = []; chat.sessions = {}; store.save(); broadcast('chats.changed', {}); return; }
     case 'stop': { stopChat(chat.id); return; }
     case 'cwd': {
       if (args) {
         const dir = args.replace(/^~(?=$|\/)/, os.homedir());
         chat.cwd = path.resolve(dir); chat.cwdChosen = true; chat.sessions = {}; fs.mkdirSync(chat.cwd, { recursive: true }); rememberDir(chat.cwd); store.save(); broadcast('chats.changed', {});
-        sys(chat, `工作目录已改为 \`${chatCwd(chat)}\`（AI 会话已重置）`, { markdown: true });
-      } else sys(chat, `工作目录：\`${chatCwd(chat)}\``, { markdown: true });
+        sys(chat, t('工作目录已改为 {dir}（AI 会话已重置）', { dir: `\`${chatCwd(chat)}\`` }), { markdown: true });
+      } else sys(chat, t('工作目录：') + `\`${chatCwd(chat)}\``, { markdown: true });
       return;
     }
     case 'invite': case 'kick': {
-      if (chat.type !== 'group') { sys(chat, '这个命令只能在群聊中使用'); return; }
+      if (chat.type !== 'group') { sys(chat, t('这个命令只能在群聊中使用')); return; }
       const ids = [...args.matchAll(/@([\w-]+)/g)].map((x) => x[1].toLowerCase()).filter((id) => getAgent(id));
-      if (!ids.length) { sys(chat, `用法：/${name} @成员`); return; }
+      if (!ids.length) { sys(chat, t('用法：/{name} @成员', { name })); return; }
       setMembers(chat, name === 'invite' ? [...chat.members, ...ids] : chat.members.filter((x) => !ids.includes(x)));
       return;
     }
     case 'rename': {
-      if (chat.type !== 'group' || !args) { sys(chat, '用法：/rename 新群名（仅群聊）'); return; }
+      if (chat.type !== 'group' || !args) { sys(chat, t('用法：/rename 新群名（仅群聊）')); return; }
       chat.name = args; store.save(); broadcast('chats.changed', {});
-      sys(chat, `群名称已改为「${args}」`);
+      sys(chat, t('群名称已改为「{name}」', { name: args }));
       return;
     }
   }
@@ -541,7 +589,7 @@ async function onCommand(chat, text) {
   // 不是 Noe 的命令：交给 AI 自己的 CLI
   addMessage(chat.id, { sender: 'user', text, command: true });
   const ts = commandTargets(chat, args, { requireOne: true });
-  if (!ts.length) { sys(chat, `不认识的命令 /${name}。在群里请指定交给谁执行，例如 /${name} @claude；输入 /help 查看 Noe 的命令。`); return; }
+  if (!ts.length) { sys(chat, t('不认识的命令 /{name}。在群里请指定交给谁执行，例如 /{name} @claude；输入 /help 查看 Noe 的命令。', { name })); return; }
   const agent = ts[0];
   const cliText = `/${name}${stripMentions(args) ? ' ' + stripMentions(args) : ''}`;
   if (agent.slash === 'claude' && !CLAUDE_INTERACTIVE.has(name)) {
@@ -550,8 +598,8 @@ async function onCommand(chat, text) {
     return;
   }
   try {
-    const t = agent.slash === 'claude' ? openAgentTerminal(agent, chat, { initial: cliText }) : openAgentTerminal(agent, chat, { typeAfter: cliText });
-    sys(chat, `${cliText} 需要 ${agent.name} 的交互界面，已在内置终端中打开`, { term: t.id });
+    const term = agent.slash === 'claude' ? openAgentTerminal(agent, chat, { initial: cliText }) : openAgentTerminal(agent, chat, { typeAfter: cliText });
+    sys(chat, t('{cmd} 需要 {name} 的交互界面，已在内置终端中打开', { cmd: cliText, name: agent.name }), { term: term.id });
   } catch (e) { sys(chat, `⚠ ${e.message}`); }
 }
 
@@ -566,13 +614,13 @@ function setMembers(chat, members) {
   const added = members.filter((m) => !chat.members.includes(m) && getAgent(m));
   const removed = chat.members.filter((m) => !members.includes(m));
   chat.members = [...new Set(members)].filter(getAgent);
-  if (added.length) addMessage(chat.id, { sender: 'system', text: `${added.map((m) => getAgent(m).name).join('、')} 加入了群聊` });
-  if (removed.length) addMessage(chat.id, { sender: 'system', text: `${removed.map((m) => getAgent(m)?.name || m).join('、')} 被移出群聊` });
+  if (added.length) addMessage(chat.id, { sender: 'system', text: t('{names} 加入了群聊', { names: join(added.map((m) => getAgent(m).name)) }) });
+  if (removed.length) addMessage(chat.id, { sender: 'system', text: t('{names} 被移出群聊', { names: join(removed.map((m) => getAgent(m)?.name || m)) }) });
   store.save(); broadcast('chats.changed', {});
 }
 
 // ---------- HTTP ----------
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
 function send(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -584,7 +632,7 @@ function readBody(req) {
     req.setEncoding('utf8');
     req.on('data', (c) => {
       s += c;
-      if (s.length > 10e6) { reject(httpErr(413, '请求内容过大')); req.destroy(); }
+      if (s.length > 10e6) { reject(httpErr(413, t('请求内容过大'))); req.destroy(); }
     });
     req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { resolve({}); } });
     req.on('error', reject);
@@ -604,8 +652,8 @@ function brief(m) {
 
 route('GET', '/api/state', async () => ({
   agents: allAgents().map(publicAgent), settings: db.settings,
-  providers: db.providers.map(publicProvider), presets: PRESETS, protocols: PROTOCOLS, commands: COMMANDS,
-  terms: pty.list(), home: os.homedir(), version: VERSION,
+  providers: db.providers.map(publicProvider), presets: PRESETS, protocols: PROTOCOLS, commands: COMMANDS.map(tc),
+  terms: pty.list(), home: os.homedir(), version: VERSION, lang: i18n.lang(), arenaStats: db.arenaStats || {}, git: snapshots.available(),
   chats: db.chats.map((c) => ({ ...c, last: brief(msgs(c.id).at(-1)), count: msgs(c.id).length, busy: chatBusy(c.id) })),
 }));
 
@@ -613,33 +661,33 @@ route('GET', '/api/state', async () => ({
 route('POST', '/api/agents/refresh', async () => { await Promise.all(allAgents().map(checkStatus)); broadcast('agents.changed', {}); return { ok: true }; });
 route('POST', '/api/agents/:id/install', async ({ id }) => {
   const a = getAgent(id); const cmd = a && installCmd(a);
-  if (!cmd) throw httpErr(400, '该工具没有安装命令');
+  if (!cmd) throw httpErr(400, t('该工具没有安装命令'));
   return { ok: runShell(id, cmd, statusCache[id]?.installed ? '更新' : '安装') };
 });
 route('POST', '/api/agents/:id/uninstall', async ({ id }) => {
   const a = getAgent(id); const cmd = a && uninstallCmd(a);
-  if (!cmd) throw httpErr(400, '该工具没有卸载命令');
+  if (!cmd) throw httpErr(400, t('该工具没有卸载命令'));
   return { ok: runShell(id, cmd, '卸载') };
 });
 route('POST', '/api/agents/:id/login', async ({ id }, b) => {
-  const a = getAgent(id); if (!a) throw httpErr(404, 'agent 不存在');
+  const a = getAgent(id); if (!a) throw httpErr(404, t('这个 AI 工具不存在'));
   return { term: openLogin(a, b.chatId || null, !!b.logout).id };
 });
 route('POST', '/api/agents/:id/terminal', async ({ id }, b) => {
-  const a = getAgent(id); if (!a) throw httpErr(404, 'agent 不存在');
+  const a = getAgent(id); if (!a) throw httpErr(404, t('这个 AI 工具不存在'));
   return { term: openAgentTerminal(a, b.chatId ? getChat(b.chatId) : null).id };
 });
 route('PUT', '/api/agents/:id/config', async ({ id }, b) => {
-  const a = getAgent(id); if (!a) throw httpErr(404, 'agent 不存在');
+  const a = getAgent(id); if (!a) throw httpErr(404, t('这个 AI 工具不存在'));
   const cfg = agentCfg(id);
   if (b.mode === 'official' || b.mode === 'provider') cfg.mode = b.mode;
   if (b.providerId !== undefined) {
     const p = getProvider(b.providerId);
-    if (b.providerId && !p) throw httpErr(400, '厂商不存在');
-    if (p && !supports(a, p)) throw httpErr(400, `${a.name} 需要 ${a.protocols.map((x) => PROTOCOLS[x]).join('/')} 地址，该厂商没有配置`);
+    if (b.providerId && !p) throw httpErr(400, t('厂商不存在'));
+    if (p && !supports(a, p)) throw httpErr(400, t('{name} 需要 {proto} 地址，该厂商没有配置', { name: a.name, proto: a.protocols.map((x) => t(PROTOCOLS[x])).join('/') }));
     cfg.providerId = b.providerId;
   }
-  if (cfg.mode === 'provider' && !getProvider(cfg.providerId)) throw httpErr(400, '请选择一个厂商');
+  if (cfg.mode === 'provider' && !getProvider(cfg.providerId)) throw httpErr(400, t('请选择一个厂商'));
   if (b.model !== undefined) cfg.model = String(b.model).trim();
   if (b.effort !== undefined) cfg.effort = models.EFFORT_LABEL[b.effort] ? b.effort : '';
   if (b.extraEnv !== undefined) cfg.extraEnv = b.extraEnv;
@@ -648,9 +696,9 @@ route('PUT', '/api/agents/:id/config', async ({ id }, b) => {
   return publicAgent(a);
 });
 route('POST', '/api/agents/custom', async (_, b) => {
-  if (!b.name || !b.bin) throw httpErr(400, '名称和命令必填');
+  if (!b.name || !b.bin) throw httpErr(400, t('名称和命令必填'));
   const id = (b.id || b.name).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'agent' + uid().slice(0, 4);
-  if (getAgent(id) && !db.customAgents.some((c) => c.id === id)) throw httpErr(400, `ID ${id} 已被占用`);
+  if (getAgent(id) && !db.customAgents.some((c) => c.id === id)) throw httpErr(400, t('ID {id} 已被占用', { id }));
   db.customAgents = db.customAgents.filter((c) => c.id !== id);
   db.customAgents.push({ id, name: b.name, bin: b.bin, argsTemplate: b.argsTemplate || '{prompt}', installCmd: b.installCmd || '', color: b.color });
   store.save();
@@ -671,7 +719,7 @@ function normalizeProvider(b, old = {}) {
   const models = (Array.isArray(b.models) ? b.models : String(b.models ?? '').split(/[\n,，]/)).map((s) => String(s).trim()).filter(Boolean);
   const key = b.apiKey === undefined || String(b.apiKey).includes('••••') ? old.apiKey || '' : String(b.apiKey).trim();
   return {
-    id: old.id || 'p-' + uid(), preset: b.preset ?? old.preset ?? 'custom', name: String(b.name ?? old.name ?? '').trim() || '未命名厂商',
+    id: old.id || 'p-' + uid(), preset: b.preset ?? old.preset ?? 'custom', name: String(b.name ?? old.name ?? '').trim() || t('未命名厂商'),
     color: b.color || old.color || '#64748b', apiKey: key, urls, models: [...new Set(models)], smallModel: String(b.smallModel ?? old.smallModel ?? '').trim(),
     note: String(b.note ?? old.note ?? ''), createdAt: old.createdAt || Date.now(),
   };
@@ -682,7 +730,7 @@ route('POST', '/api/providers', async (_, b) => {
   return publicProvider(p);
 });
 route('PUT', '/api/providers/:id', async ({ id }, b) => {
-  const i = db.providers.findIndex((p) => p.id === id); if (i < 0) throw httpErr(404, '厂商不存在');
+  const i = db.providers.findIndex((p) => p.id === id); if (i < 0) throw httpErr(404, t('厂商不存在'));
   db.providers[i] = normalizeProvider(b, db.providers[i]); store.save(); broadcast('agents.changed', {});
   return publicProvider(db.providers[i]);
 });
@@ -693,9 +741,9 @@ route('DELETE', '/api/providers/:id', async ({ id }) => {
   return { ok: true };
 });
 route('POST', '/api/providers/:id/sync-preset', async ({ id }) => {
-  const p = getProvider(id); if (!p) throw httpErr(404, '厂商不存在');
+  const p = getProvider(id); if (!p) throw httpErr(404, t('厂商不存在'));
   const pr = PRESETS.find((x) => x.preset === p.preset);
-  if (!pr || !pr.models.length) throw httpErr(400, '这个厂商没有预设模型');
+  if (!pr || !pr.models.length) throw httpErr(400, t('这个厂商没有预设模型'));
   const added = pr.models.filter((m) => !p.models.includes(m));
   p.models = [...pr.models, ...p.models.filter((m) => !pr.models.includes(m))];
   store.save(); broadcast('agents.changed', {});
@@ -703,11 +751,11 @@ route('POST', '/api/providers/:id/sync-preset', async ({ id }) => {
 });
 route('GET', '/api/models', async () => models.catalog());
 route('POST', '/api/providers/:id/test', async ({ id }, b) => {
-  const p = getProvider(id); if (!p) throw httpErr(404, '厂商不存在');
+  const p = getProvider(id); if (!p) throw httpErr(404, t('厂商不存在'));
   return { results: await testProvider(p, b.model) };
 });
 route('POST', '/api/providers/:id/models', async ({ id }) => {
-  const p = getProvider(id); if (!p) throw httpErr(404, '厂商不存在');
+  const p = getProvider(id); if (!p) throw httpErr(404, t('厂商不存在'));
   try { return { models: await listModels(p) }; } catch (e) { throw httpErr(400, e.message); }
 });
 
@@ -722,6 +770,7 @@ route('PUT', '/api/settings', async (_, b) => {
   if (b.maxChain !== undefined) db.settings.maxChain = num(b.maxChain, 0, 10, 3);
   if (b.historyLimit !== undefined) db.settings.historyLimit = num(b.historyLimit, 0, 100, 20);
   for (const k of ['autoApprove', 'notify', 'askCwd', 'snapshots']) if (b[k] !== undefined) db.settings[k] = !!b[k];
+  if (b.lang !== undefined) db.settings.lang = /^[a-z]{2}(-[A-Za-z]+)?$/.test(b.lang) ? b.lang : '';
   store.save(); return db.settings;
 });
 
@@ -729,17 +778,17 @@ route('PUT', '/api/settings', async (_, b) => {
 route('POST', '/api/chats', async (_, b) => {
   const cwd = b.cwd ? path.resolve(expandHome(b.cwd)) : '';
   if (cwd) { fs.mkdirSync(cwd, { recursive: true }); rememberDir(cwd); }
-  const chat = { id: 'g-' + uid(), type: 'group', name: b.name || '新群聊', members: [...new Set(b.members || [])].filter(getAgent), cwd, cwdChosen: !!cwd, sessions: {}, createdAt: Date.now() };
+  const chat = { id: 'g-' + uid(), type: 'group', name: b.name || t('新群聊'), members: [...new Set(b.members || [])].filter(getAgent), cwd, cwdChosen: !!cwd, sessions: {}, createdAt: Date.now() };
   db.chats.push(chat); store.save(); broadcast('chats.changed', {});
-  addMessage(chat.id, { sender: 'system', text: `群聊已创建。成员：${chat.members.map((id) => '@' + id).join(' ') || '暂无，把左侧的 AI 拖进来吧'}` });
+  addMessage(chat.id, { sender: 'system', text: t('群聊已创建。成员：{list}', { list: chat.members.map((id) => '@' + id).join(' ') || t('暂无，把左侧的 AI 拖进来吧') }) });
   return chat;
 });
 route('GET', '/api/chats/:id', async ({ id }) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
   return { chat: { ...chat, cwdResolved: chatCwd(chat) }, messages: msgs(id) };
 });
 route('PATCH', '/api/chats/:id', async ({ id }, b) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
   if (b.name !== undefined && chat.type === 'group') chat.name = b.name;
   if (b.pinned !== undefined) chat.pinned = !!b.pinned;
   if (b.cwd !== undefined) {
@@ -760,16 +809,16 @@ route('DELETE', '/api/chats/:id', async ({ id }) => {
   return { ok: true };
 });
 route('POST', '/api/chats/:id/messages', async ({ id }, b) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
-  const text = String(b.text || '').trim(); if (!text) throw httpErr(400, '消息为空');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
+  const text = String(b.text || '').trim(); if (!text) throw httpErr(400, t('消息为空'));
   (text.startsWith('/') ? onCommand(chat, text) : onUserMessage(chat, text)).catch((e) => { console.error(e); sys(chat, '⚠ ' + e.message); });
   return { ok: true };
 });
 route('POST', '/api/chats/:id/retry', async ({ id }, b) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
   const m = msgs(id).find((x) => x.id === b.messageId);
   const trigger = m && msgs(id).find((x) => x.id === m.replyTo);
-  if (!m || !trigger) throw httpErr(400, '找不到要重试的消息');
+  if (!m || !trigger) throw httpErr(400, t('找不到要重试的消息'));
   dispatch(chat, m.sender, trigger, 0).catch((e) => console.error(e));
   return { ok: true };
 });
@@ -785,13 +834,13 @@ route('POST', '/api/chats/:id/stop', async ({ id }, b) => {
 // ---------- 时光机：查看 / 撤销某条回复的文件改动 ----------
 function changedMsg(chatId, mid) {
   const m = msgs(chatId).find((x) => x.id === mid);
-  if (!m?.changes) throw httpErr(404, '这条消息没有记录文件改动');
+  if (!m?.changes) throw httpErr(404, t('这条消息没有记录文件改动'));
   return m;
 }
 route('GET', '/api/chats/:id/messages/:mid/diff', async ({ id, mid }, _b, url) => {
   const { changes: c } = changedMsg(id, mid);
   try { return { diff: await snapshots.diff(c.cwd, c.base, c.head, url.searchParams.get('path') || '') }; }
-  catch (e) { throw httpErr(410, '快照已不存在（可能被清理了）：' + e.message); }
+  catch (e) { throw httpErr(410, t('快照已不存在（可能被清理了）：') + e.message); }
 });
 route('POST', '/api/chats/:id/messages/:mid/revert', async ({ id, mid }, b) => {
   const m = changedMsg(id, mid);
@@ -801,13 +850,36 @@ route('POST', '/api/chats/:id/messages/:mid/revert', async ({ id, mid }, b) => {
   const paths = c.files.map((f) => f.path);
   let r;
   try { r = await snapshots.restore(c.cwd, { target: undo ? c.base : c.head, expect: undo ? c.head : c.base, paths, force: !!b.force }); }
-  catch (e) { throw httpErr(410, '恢复失败：' + e.message); }
+  catch (e) { throw httpErr(410, t('恢复失败：') + e.message); }
   if (r.conflicts) return { conflicts: r.conflicts };
   c.reverted = undo;
   store.save();
   broadcast('message.update', m);
   return { ok: true };
 });
+// ---------- AI 擂台 ----------
+route('POST', '/api/chats/:id/arena', async ({ id }, b) => {
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
+  const task = String(b.task || '').trim();
+  const contestants = arenaContestants(chat, '', b.members);
+  await startArena(chat, task, contestants, { blind: b.blind !== false, echo: true });
+  return { ok: true };
+});
+route('POST', '/api/chats/:id/messages/:mid/arena/reveal', async ({ id, mid }) => { arena.reveal(id, mid); return { ok: true }; });
+route('POST', '/api/chats/:id/messages/:mid/arena/:agent/adopt', async ({ id, mid, agent }) => {
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
+  return arena.adopt(chat, mid, agent);
+});
+route('GET', '/api/chats/:id/messages/:mid/arena/:agent/diff', async ({ id, mid, agent }, _b, url) => {
+  try { return { diff: await arena.diff(id, mid, agent, url.searchParams.get('path') || '') }; }
+  catch (e) { throw e.code ? e : httpErr(410, t('快照已不存在（可能被清理了）：') + e.message); }
+});
+route('POST', '/api/chats/:id/messages/:mid/arena/:agent/open', async ({ id, mid, agent }) => {
+  const dir = arena.dir(id, mid, agent);
+  spawn(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [dir], { detached: true, stdio: 'ignore' }).unref();
+  return { ok: true, path: dir };
+});
+
 route('POST', '/api/snapshots/clear', async () => {
   snapshots.clearAll();
   for (const list of Object.values(db.messages)) for (const m of list) if (m.changes) m.changes.expired = true;
@@ -817,11 +889,11 @@ route('POST', '/api/snapshots/clear', async () => {
 
 // 导出聊天记录为 Markdown
 route('GET', '/api/chats/:id/export', async ({ id }) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
-  const ts = (t) => new Date(t).toLocaleString('zh-CN', { hour12: false });
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
+  const ts = (x) => new Date(x).toLocaleString(i18n.lang() === 'zh' ? 'zh-CN' : 'en-US', { hour12: false });
   const lines = [`# ${chat.type === 'group' ? chat.name : getAgent(chat.members[0])?.name || chat.name}`, '',
-    `- 导出时间：${ts(Date.now())}`, `- 工作目录：\`${chatCwd(chat)}\``,
-    ...(chat.type === 'group' ? [`- 成员：${chat.members.map((m) => getAgent(m)?.name || m).join('、')}`] : []), ''];
+    `- ${t('导出时间：')}${ts(Date.now())}`, `- ${t('工作目录：')}\`${chatCwd(chat)}\``,
+    ...(chat.type === 'group' ? [`- ${t('成员：')}${join(chat.members.map((m) => getAgent(m)?.name || m))}`] : []), ''];
   for (const m of msgs(id)) {
     if (m.status === 'streaming') continue;
     if (m.sender === 'system') { lines.push(`> ${String(m.text || '').replace(/\n/g, '\n> ')}`, ''); continue; }
@@ -829,8 +901,9 @@ route('GET', '/api/chats/:id/export', async ({ id }) => {
     lines.push(`## ${senderName(m)}${m.sender === 'user' ? '' : meta} · ${ts(m.ts)}`, '');
     if (m.text) lines.push(m.text, '');
     if (m.error) lines.push('```text', m.error, '```', '');
-    if (m.changes) lines.push(`_改动了 ${m.changes.total} 个文件（+${m.changes.add} −${m.changes.del}）${m.changes.reverted ? '，已撤销' : ''}：${m.changes.files.slice(0, 20).map((f) => '`' + f.path + '`').join('、')}_`, '');
-    if (m.status === 'stopped') lines.push('_（已停止）_', '');
+    if (m.changes) lines.push(`_${t('改动了 {n} 个文件（+{add} −{del}）', { n: m.changes.total, add: m.changes.add, del: m.changes.del })}${m.changes.reverted ? t('，已撤销') : ''}：${join(m.changes.files.slice(0, 20).map((f) => '`' + f.path + '`'))}_`, '');
+    if (m.kind === 'arena') for (const e of m.arena.entries) lines.push(`### ${m.arena.winner === e.agent ? '🏆 ' : ''}${getAgent(e.agent)?.name || e.agent}`, '', e.text || e.error || '', '');
+    if (m.status === 'stopped') lines.push(`_${t('（已停止）')}_`, '');
   }
   return { name: `${(chat.type === 'group' ? chat.name : chat.members[0]).replace(/[\\/:*?"<>|]/g, '_')}-${new Date().toLocaleDateString('sv')}.md`, markdown: lines.join('\n') };
 });
@@ -853,7 +926,7 @@ route('GET', '/api/search', async (_p, _b, url) => {
   return { results: results.sort((a, b) => b.ts - a.ts).slice(0, 50) };
 });
 route('POST', '/api/chats/:id/open-folder', async ({ id }) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
   spawn(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [chatCwd(chat)]);
   return { ok: true };
 });
@@ -867,12 +940,12 @@ const expandHome = (p) => String(p || '').trim().replace(/^~(?=$|[\\/])/, os.hom
 
 route('POST', '/api/pick-folder', async (_, b) => {
   if (process.platform === 'win32') return pickFolderWin(b);
-  if (process.platform !== 'darwin') throw httpErr(400, '当前系统不支持原生选择框，请直接输入路径');
+  if (process.platform !== 'darwin') throw httpErr(400, t('当前系统不支持原生选择框，请直接输入路径'));
   const esc = (x) => String(x).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const def = expandHome(b.defaultPath || '');
   const loc = def && fs.existsSync(def) ? ` default location (POSIX file "${esc(def)}")` : '';
   // 在当前最前面的应用里弹出，避免选择框藏在窗口后面
-  const script = `tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "${esc(b.prompt || '选择工作目录')}"${loc})`;
+  const script = `tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "${esc(b.prompt || t('选择工作目录'))}"${loc})`;
   return new Promise((resolve) => {
     execFile('osascript', ['-e', script], { timeout: 10 * 60e3 }, (err, out) => {
       if (err) return resolve({ cancelled: true });
@@ -891,7 +964,7 @@ function pickFolderWin(b) {
     'Add-Type -AssemblyName System.Windows.Forms',
     '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
     '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
-    `$d.Description = ${ps(b.prompt || '选择工作目录')}`,
+    `$d.Description = ${ps(b.prompt || t('选择工作目录'))}`,
     '$d.ShowNewFolderButton = $true',
     def && fs.existsSync(def) ? `$d.SelectedPath = ${ps(def)}` : '',
     '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }',
@@ -920,7 +993,7 @@ route('POST', '/api/open', async (_, b) => {
   const chat = b.chatId ? getChat(b.chatId) : null;
   const base = chat ? chatCwd(chat) : os.homedir();
   const full = path.resolve(base, expandHome(target));
-  if (!fs.existsSync(full)) throw httpErr(404, `找不到文件：${full.replace(os.homedir(), '~')}`);
+  if (!fs.existsSync(full)) throw httpErr(404, t('找不到文件：') + full.replace(os.homedir(), '~'));
   if (process.platform === 'win32') {
     // explorer 的 /select, 参数要和路径连在一起；直接打开文件走 FileProtocolHandler，避免 explorer 把路径当成命令行解析
     const [cmd, args] = b.reveal ? ['explorer.exe', [`/select,"${full}"`]] : ['rundll32', ['url.dll,FileProtocolHandler', full]];
@@ -933,14 +1006,14 @@ route('POST', '/api/open', async (_, b) => {
 });
 
 route('POST', '/api/chats/:id/shell', async ({ id }) => {
-  const chat = getChat(id); if (!chat) throw httpErr(404, '会话不存在');
+  const chat = getChat(id); if (!chat) throw httpErr(404, t('会话不存在'));
   return { term: openShell(chat).id };
 });
 
 // terminals
 route('GET', '/api/terms/:id/buffer', async ({ id }) => {
-  const t = pty.get(id); if (!t) throw httpErr(404, '终端不存在');
-  return { buffer: t.buffer.slice(-200000), exited: t.exited };
+  const term = pty.get(id); if (!term) throw httpErr(404, t('终端不存在'));
+  return { buffer: term.buffer.slice(-200000), exited: term.exited };
 });
 route('POST', '/api/terms/:id/input', async ({ id }, b) => { pty.write(id, String(b.data || '')); return { ok: true }; });
 route('POST', '/api/terms/:id/resize', async ({ id }, b) => { pty.resize(id, b.cols, b.rows); return { ok: true }; });
@@ -959,8 +1032,8 @@ async function installMcp(server, targets) {
   const results = [];
   for (const id of targets) {
     const ad = ext.ADAPTERS[id];
-    if (!ad) { results.push({ agent: id, ok: false, error: '该工具暂不支持 MCP' }); continue; }
-    if (!installed(id)) { results.push({ agent: id, ok: false, error: '工具未安装' }); continue; }
+    if (!ad) { results.push({ agent: id, ok: false, error: t('该工具暂不支持 MCP') }); continue; }
+    if (!installed(id)) { results.push({ agent: id, ok: false, error: t('工具未安装') }); continue; }
     try { const notes = await ad.add(server.name, server, extCtx()); results.push({ agent: id, ok: true, notes: notes || [] }); }
     catch (e) { results.push({ agent: id, ok: false, error: e.message }); }
   }
@@ -976,11 +1049,11 @@ route('GET', '/api/ext/mcp', async () => ({
 }));
 route('POST', '/api/ext/mcp/install', async (_, b) => {
   const targets = (b.targets || []).filter((t) => ext.ADAPTERS[t]);
-  if (!targets.length) throw httpErr(400, '请至少选择一个工具');
+  if (!targets.length) throw httpErr(400, t('请至少选择一个工具'));
   let server, entry = null;
   if (b.catalogId) {
     entry = CATALOG.find((c) => c.id === b.catalogId);
-    if (!entry) throw httpErr(404, '目录中没有这个 MCP');
+    if (!entry) throw httpErr(404, t('目录中没有这个 MCP'));
     try { server = { name: (b.name || entry.id).trim(), ...ext.fillTemplate(entry, b.values || {}, extCtx()), auth: entry.auth }; }
     catch (e) { throw httpErr(400, e.message); }
   } else {
@@ -1003,9 +1076,9 @@ route('POST', '/api/ext/mcp/remove', async (_, b) => {
 });
 route('POST', '/api/ext/mcp/login', async (_, b) => {
   const ad = ext.ADAPTERS[b.agent];
-  if (!ad?.loginArgv) throw httpErr(400, '该工具不支持命令行授权，请在它的交互界面里用 /mcp 授权');
-  const t = pty.open({ argv: ad.loginArgv(b.name), env: baseEnv(), cwd: os.homedir(), agentId: b.agent, kind: 'login', title: `${ad.label} · 授权 ${b.name}` });
-  return { term: t.id };
+  if (!ad?.loginArgv) throw httpErr(400, t('该工具不支持命令行授权，请在它的交互界面里用 /mcp 授权'));
+  const term = pty.open({ argv: ad.loginArgv(b.name), env: baseEnv(), cwd: os.homedir(), agentId: b.agent, kind: 'login', title: `${ad.label} · ${t('授权')} ${b.name}` });
+  return { term: term.id };
 });
 
 // 插件列表获取较慢，做 30 秒缓存
@@ -1023,11 +1096,11 @@ route('GET', '/api/ext/plugins', async () => ({
 }));
 route('GET', '/api/ext/plugins/:agent', async ({ agent }, _b, url) => {
   const fresh = url.searchParams.has('fresh');
-  if (!installed(agent)) throw httpErr(400, '工具未安装');
+  if (!installed(agent)) throw httpErr(400, t('工具未安装'));
   if (agent === 'claude') return cached('claude', ext.claudePlugins, fresh);
   if (agent === 'codex') return cached('codex', ext.codexPlugins, fresh);
   if (agent === 'gemini') return { installed: ext.geminiExtensions() };
-  throw httpErr(400, '该工具暂不支持插件');
+  throw httpErr(400, t('该工具暂不支持插件'));
 });
 route('POST', '/api/ext/plugins/:agent', async ({ agent }, b) => {
   const A = {
@@ -1054,20 +1127,20 @@ route('POST', '/api/ext/plugins/:agent', async ({ agent }, b) => {
     },
   }[agent];
   const make = A?.[b.action];
-  if (!make) throw httpErr(400, '不支持的操作');
-  if (!installed(agent)) throw httpErr(400, '工具未安装');
+  if (!make) throw httpErr(400, t('不支持的操作'));
+  if (!installed(agent)) throw httpErr(400, t('工具未安装'));
   const target = String(b.target || '').trim();
-  if (!target && !b.action.endsWith('update')) throw httpErr(400, '缺少目标');
+  if (!target && !b.action.endsWith('update')) throw httpErr(400, t('缺少目标'));
   const r = await ext.run(make(target), { timeout: 300000 });
   delete pluginCache[agent];
   broadcast('ext.changed', { kind: 'plugins', agent });
-  if (r.code !== 0) throw httpErr(400, r.out.split('\n').slice(-8).join('\n') || `退出码 ${r.code}`);
+  if (r.code !== 0) throw httpErr(400, r.out.split('\n').slice(-8).join('\n') || t('退出码 {code}', { code: r.code }));
   return { ok: true, out: r.out.split('\n').slice(-6).join('\n') };
 });
 route('POST', '/api/ext/plugins/:agent/configure', async ({ agent }, b) => {
-  if (agent !== 'gemini') throw httpErr(400, '不支持');
-  const t = pty.open({ argv: ['gemini', 'extensions', 'config', String(b.target)], env: baseEnv(), cwd: os.homedir(), agentId: agent, kind: 'cli', title: `Gemini · 配置扩展 ${b.target}` });
-  return { term: t.id };
+  if (agent !== 'gemini') throw httpErr(400, t('不支持的操作'));
+  const term = pty.open({ argv: ['gemini', 'extensions', 'config', String(b.target)], env: baseEnv(), cwd: os.homedir(), agentId: agent, kind: 'cli', title: `Gemini · ${t('配置扩展')} ${b.target}` });
+  return { term: term.id };
 });
 
 // 只接受来自本机页面的请求：
@@ -1126,7 +1199,7 @@ function start(port = Number(process.env.PORT) || 17860) {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address().port;
-      console.log(`Noe Agent 已启动：http://127.0.0.1:${actual}`);
+      console.log(`Noe Agent: http://127.0.0.1:${actual}`);
       Promise.all(allAgents().map(checkStatus)).then(() => broadcast('agents.changed', {}));
       resolve(actual);
     });

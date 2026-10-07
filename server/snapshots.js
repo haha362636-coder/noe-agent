@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 const { baseEnv, which } = require('./env');
 const { DIR: STORE_DIR } = require('./store');
+const { t } = require('./i18n');
 
 const DIR = path.join(STORE_DIR, 'snapshots');
 // 常见的依赖、构建产物和大文件目录：项目没写 .gitignore 时也不拍进快照
@@ -120,7 +121,7 @@ async function changes(cwd, from, to) {
 /** 统一格式的差异文本，可只看一个文件 */
 async function diff(cwd, from, to, file) {
   const out = await git(cwd, ['diff', '--no-renames', '--no-color', '-U3', from, to, '--', ...(file ? [file] : ['.'])]);
-  return out.length > 400000 ? out.slice(0, 400000) + '\n…（差异太长，已截断）' : out;
+  return out.length > 400000 ? out.slice(0, 400000) + '\n' + t('…（差异太长，已截断）') : out;
 }
 
 /**
@@ -128,7 +129,7 @@ async function diff(cwd, from, to, file) {
  * expect：这些文件现在“应该”是哪个快照的样子；如果之后又被改过，返回冲突列表而不动文件（除非 force）。
  */
 function restore(cwd, { target, expect, paths, force }) {
-  if (!gitPath()) return Promise.reject(new Error('没有找到 git，无法恢复'));
+  if (!gitPath()) return Promise.reject(new Error(t('没有找到 git，无法恢复')));
   return locked(cwd, async () => {
     await ensureRepo(cwd);
     if (!force && expect) {
@@ -150,6 +151,39 @@ function restore(cwd, { target, expect, paths, force }) {
   });
 }
 
+/** 读快照里某个文件的原始内容（二进制安全） */
+function blob(cwd, commit, file) {
+  return new Promise((resolve, reject) => {
+    const env = { ...baseEnv(), GIT_DIR: gitDir(cwd), GIT_WORK_TREE: cwd };
+    execFile(gitPath(), ['cat-file', 'blob', `${commit}:${file}`], { cwd, env, encoding: 'buffer', timeout: SNAP_TIMEOUT, maxBuffer: 512 * 1024 * 1024 },
+      (err, out, errOut) => (err ? reject(new Error(String(errOut || err.message).trim().split('\n').pop())) : resolve(out)));
+  });
+}
+
+/**
+ * 把另一个目录（AI 擂台的沙盒）快照 commit 里的这些文件写到 dest：新增 / 修改的写入，删除的删掉。
+ * files 来自 changes()；可执行权限一并带过去。
+ */
+async function exportFiles(srcCwd, commit, files, dest) {
+  if (!gitPath()) throw new Error(t('没有找到 git，无法合并改动'));
+  const root = path.resolve(dest);
+  const keep = files.filter((f) => f.status !== 'D').map((f) => f.path);
+  const exec = new Set();
+  for (let i = 0; i < keep.length; i += 200) {
+    const out = await git(srcCwd, ['ls-tree', '-r', '-z', commit, '--', ...keep.slice(i, i + 200)]);
+    for (const line of out.split('\0').filter(Boolean)) { const [info, p] = line.split('\t'); if (info.startsWith('100755')) exec.add(p); }
+  }
+  for (const f of files) {
+    const out = path.resolve(root, f.path);
+    if (!out.startsWith(root + path.sep)) continue;
+    if (f.status === 'D') { fs.rmSync(out, { force: true }); continue; }
+    const buf = await blob(srcCwd, commit, f.path);
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, buf);
+    if (exec.has(f.path) && process.platform !== 'win32') fs.chmodSync(out, 0o755);
+  }
+}
+
 function clearAll() { disabled.clear(); fs.rmSync(DIR, { recursive: true, force: true }); }
 
-module.exports = { take, changes, diff, restore, clearAll, available: () => !!gitPath() };
+module.exports = { take, changes, diff, restore, exportFiles, clearAll, available: () => !!gitPath() };

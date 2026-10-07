@@ -1,5 +1,5 @@
 // 内置终端抽屉：xterm.js + 服务端伪终端
-import { $, esc, S, api, icon, agentById, avatar, on } from './core.js';
+import { $, esc, S, api, icon, agentById, avatar, on, t } from './core.js';
 
 const { Terminal, FitAddon } = window.Vendor;
 const xterms = new Map(); // id -> { term, fit, el, pendingInput, timer }
@@ -21,10 +21,10 @@ export function initTerminals() {
   d.innerHTML = `<div class="term-resize" id="term-resize"></div>
     <div class="term-bar"><div class="term-tabs" id="term-tabs"></div>
       <div class="term-tools">
-        <button class="icon-btn ghost xs" id="term-new" title="新建系统终端">${icon('plus', 15)}</button>
-        <button class="icon-btn ghost xs" id="term-hide" title="收起 (⌘J)">${icon('chevron', 15)}</button>
+        <button class="icon-btn ghost xs" id="term-new" title="${t('新建系统终端')}">${icon('plus', 15)}</button>
+        <button class="icon-btn ghost xs" id="term-hide" title="${t('收起 (⌘J)')}">${icon('chevron', 15)}</button>
       </div></div>
-    <div class="term-body" id="term-body"><div class="term-empty">没有打开的终端。输入 <code>/login</code>、<code>/terminal</code> 或 <code>/shell</code> 会在这里打开。</div></div>`;
+    <div class="term-body" id="term-body"><div class="term-empty">${t('没有打开的终端。输入 {a}、{b} 或 {c} 会在这里打开。', { a: '<code>/login</code>', b: '<code>/terminal</code>', c: '<code>/shell</code>' })}</div></div>`;
   d.style.height = height + 'px';
   $('#term-hide').onclick = () => toggle(false);
   $('#term-new').onclick = async () => {
@@ -127,11 +127,11 @@ export function toggle(show) {
 
 function renderTabs() {
   const tabs = $('#term-tabs'); if (!tabs) return;
-  tabs.innerHTML = S.terms.map((t) => {
-    const a = agentById(t.agentId);
-    return `<div class="term-tab ${t.id === active ? 'active' : ''} ${t.exited ? 'exited' : ''}" data-tab="${t.id}" title="${esc(t.title)}">
-      ${a ? avatar(a, 16) : icon('terminal', 14)}<span>${esc(t.title)}</span>${t.exited ? '<i class="ex">已结束</i>' : '<i class="live"></i>'}
-      <button class="tab-x" data-close="${t.id}">${icon('x', 12)}</button></div>`;
+  tabs.innerHTML = S.terms.map((tm) => {
+    const a = agentById(tm.agentId);
+    return `<div class="term-tab ${tm.id === active ? 'active' : ''} ${tm.exited ? 'exited' : ''}" data-tab="${tm.id}" title="${esc(tm.title)}">
+      ${a ? avatar(a, 16) : icon('terminal', 14)}<span>${esc(tm.title)}</span>${tm.exited ? `<i class="ex">${t('已结束')}</i>` : '<i class="live"></i>'}
+      <button class="tab-x" data-close="${tm.id}">${icon('x', 12)}</button></div>`;
   }).join('');
   $('#term-empty-hint')?.remove();
   $('.term-empty')?.classList.toggle('hidden', S.terms.length > 0);

@@ -2,6 +2,8 @@
 // 预设模型于 2026-10 更新；各厂商模型更新很快，可在界面上「从厂商拉取列表」或「同步预设模型」
 // 一个厂商可以同时提供多种协议的地址：anthropic（给 Claude Code）、openai（给 Codex / Qwen / OpenCode / DeepSeek Harness）、gemini（给 Gemini CLI）
 
+const { t } = require('./i18n');
+
 const PRESETS = [
   {
     preset: 'anthropic', name: 'Anthropic 官方 API', color: '#d97757', site: 'https://console.anthropic.com/settings/keys',
@@ -83,11 +85,11 @@ async function req(url, opts) {
     try { json = JSON.parse(text); } catch { /* 非 JSON */ }
     if (!res.ok) {
       const msg = json?.error?.message || json?.message || json?.error || text.slice(0, 300);
-      throw new Error(`HTTP ${res.status}：${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
+      throw new Error(`HTTP ${res.status}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
     }
     return json ?? text;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('请求超时（30 秒）');
+    if (e.name === 'AbortError') throw new Error(t('请求超时（30 秒）'));
     throw e;
   } finally { clearTimeout(timer); }
 }
@@ -99,8 +101,8 @@ const openaiHeaders = (key) => ({ 'content-type': 'application/json', authorizat
 async function testProvider(p, model) {
   const m = model || p.models?.[0];
   const results = [];
-  if (!p.apiKey) return [{ protocol: '-', ok: false, error: '还没有填写 API Key' }];
-  if (!m) return [{ protocol: '-', ok: false, error: '请至少添加一个模型' }];
+  if (!p.apiKey) return [{ protocol: '-', ok: false, error: t('还没有填写 API Key') }];
+  if (!m) return [{ protocol: '-', ok: false, error: t('请至少添加一个模型') }];
   const u = p.urls || {};
   if (trimSlash(u.anthropic)) {
     results.push({ protocol: 'anthropic', ...(await timed(async () => {
@@ -120,7 +122,7 @@ async function testProvider(p, model) {
       return { reply: String(r?.candidates?.[0]?.content?.parts?.[0]?.text || '').slice(0, 60) };
     })) });
   }
-  if (!results.length) return [{ protocol: '-', ok: false, error: '至少填写一个协议地址' }];
+  if (!results.length) return [{ protocol: '-', ok: false, error: t('至少填写一个协议地址') }];
   return results;
 }
 
@@ -140,7 +142,7 @@ async function listModels(p) {
     try { const r = await req(`${trimSlash(u.gemini)}/v1beta/models`, { headers: { 'x-goog-api-key': p.apiKey } }); return (r.models || []).map((x) => String(x.name).replace(/^models\//, '')); }
     catch (e) { errors.push('Gemini：' + e.message); }
   }
-  throw new Error(errors.join('；') || '没有可用的协议地址');
+  throw new Error(errors.join('; ') || t('没有可用的协议地址'));
 }
 
 module.exports = { PRESETS, PROTOCOLS, testProvider, listModels, trimSlash };

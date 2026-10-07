@@ -1,5 +1,5 @@
 // Markdown 渲染：marked + 代码高亮 + XSS 过滤 + @ 高亮
-import { S, esc, agentById } from './core.js';
+import { S, esc, agentById, t } from './core.js';
 
 const { marked, DOMPurify, hljs } = window.Vendor;
 
@@ -12,18 +12,18 @@ marked.use({
       // highlightAuto 要把所有语言都试一遍，很慢：长代码块或流式输出中直接不自动识别
       try { html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language }).value : !fast && text.length < 4000 ? hljs.highlightAuto(text).value : esc(text); }
       catch { html = esc(text); }
-      return `<div class="code"><div class="code-head"><span>${esc(language || 'code')}</span><button class="code-copy" data-copy>复制</button></div><pre><code class="hljs">${html}</code></pre></div>`;
+      return `<div class="code"><div class="code-head"><span>${esc(language || 'code')}</span><button class="code-copy" data-copy>${t('复制')}</button></div><pre><code class="hljs">${html}</code></pre></div>`;
     },
     link(token) {
       const inner = this.parser.parseInline(token.tokens);
       // 外部链接交给浏览器；相对路径 / 本地文件交给 Noe 按会话工作目录打开（否则会解析成 Noe 自己的地址）
       if (/^(https?:|mailto:)/i.test(token.href)) return `<a href="${esc(token.href)}" target="_blank" rel="noopener">${inner}</a>`;
       if (token.href.startsWith('#')) return inner;
-      return `<a href="#" class="file-link" data-open-path="${esc(token.href)}" title="用默认程序打开">${inner}</a>`;
+      return `<a href="#" class="file-link" data-open-path="${esc(token.href)}" title="${t('用默认程序打开')}">${inner}</a>`;
     },
     codespan({ text }) {
       const raw = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-      return looksLikePath(raw) ? `<code class="path" data-open-path="${esc(raw)}" title="点击打开">${text}</code>` : `<code>${text}</code>`;
+      return looksLikePath(raw) ? `<code class="path" data-open-path="${esc(raw)}" title="${t('点击打开')}">${text}</code>` : `<code>${text}</code>`;
     },
   },
 });
@@ -71,7 +71,7 @@ export function mentionify(html) {
   for (const n of nodes) {
     const span = document.createElement('span');
     // 正文里出现的绝对路径也变成可点击
-    span.innerHTML = renderMentions(esc(n.nodeValue)).replace(ABS_PATH_IN_TEXT, (p) => `<a href="#" class="file-link" data-open-path="${p}" title="用默认程序打开">${p}</a>`);
+    span.innerHTML = renderMentions(esc(n.nodeValue)).replace(ABS_PATH_IN_TEXT, (p) => `<a href="#" class="file-link" data-open-path="${p}" title="${t('用默认程序打开')}">${p}</a>`);
     n.replaceWith(...span.childNodes);
   }
   return tpl.innerHTML;

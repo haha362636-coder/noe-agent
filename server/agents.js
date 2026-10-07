@@ -3,6 +3,7 @@
 const { spawn, execFile } = require('child_process');
 const { baseEnv, which, resolveCommand } = require('./env');
 const { trimSlash } = require('./providers');
+const { t } = require('./i18n');
 
 // Claude Code 里只能在交互界面用的 / 命令：自动转到内置终端执行
 const CLAUDE_INTERACTIVE = new Set(['login', 'logout', 'config', 'settings', 'mcp', 'permissions', 'allowed-tools', 'resume', 'doctor', 'theme', 'agents',
@@ -78,7 +79,7 @@ function fromCustom(c) {
   const tpl = (c.argsTemplate || '{prompt}').trim().split(/\s+/);
   return {
     id: c.id, name: c.name, vendor: '自定义', color: c.color || '#64748b', avatar: (c.name || '?')[0].toUpperCase(),
-    bin: c.bin, installCmd: c.installCmd || '', desc: c.desc || `自定义命令：${c.bin} ${c.argsTemplate || ''}`,
+    bin: c.bin, installCmd: c.installCmd || '', desc: c.desc || `${t('自定义命令：')}${c.bin} ${c.argsTemplate || ''}`,
     protocols: [], custom: true, mode: 'text', noModel: true, slash: 'terminal', officialLabel: '使用自身配置',
     args: (p) => tpl.map((t) => (t === '{prompt}' ? p : t.replace('{prompt}', p))),
   };
@@ -171,15 +172,15 @@ function authStatus(agent) {
       execFile(file, args, { ...o, env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out) => {
         try {
           const j = JSON.parse(out);
-          resolve({ loggedIn: !!j.loggedIn, detail: j.loggedIn ? [j.authMethod, j.email || j.account?.email].filter(Boolean).join(' · ') : '未登录' });
+          resolve({ loggedIn: !!j.loggedIn, detail: j.loggedIn ? [j.authMethod, j.email || j.account?.email].filter(Boolean).join(' · ') : t('未登录') });
         } catch { resolve(null); }
       });
     } else if (agent.id === 'codex') {
       const [file, args, o] = resolveCommand(bin, ['login', 'status']);
       execFile(file, args, { ...o, env: baseEnv(), cwd: require('os').homedir(), timeout: 15000 }, (err, out, errOut) => {
-        const t = String(out || errOut || '').trim();
-        const line = t.split('\n')[0] || '';
-        resolve({ loggedIn: !err && !/not logged in/i.test(t), detail: line.replace(/^logged in using (an? )?/i, '').replace(/^ChatGPT$/i, 'ChatGPT 账号') || (err ? '未登录' : '') });
+        const out2 = String(out || errOut || '').trim();
+        const line = out2.split('\n')[0] || '';
+        resolve({ loggedIn: !err && !/not logged in/i.test(out2), detail: line.replace(/^logged in using (an? )?/i, '').replace(/^ChatGPT$/i, t('ChatGPT 账号')) || (err ? t('未登录') : '') });
       });
     } else resolve(null);
   });
@@ -203,7 +204,7 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
   const autoApprove = !!settings.autoApprove;
   const { env, preArgs, model, providerName } = resolveAuth(agent, cfg, provider);
   const effort = (cfg.effort || '').trim();
-  const meta = { model: model || '', provider: providerName || '官方登录', effort };
+  const meta = { model: model || '', provider: providerName || t('官方登录'), effort };
 
   let args;
   if (agent.mode === 'claude') {
@@ -259,10 +260,10 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
     if (ev.type === 'system' && ev.subtype === 'api_retry') {
       // 认证错误重试也不会成功，直接结束，避免用户干等几分钟
       if ([401, 403].includes(ev.error_status)) {
-        errorMsg = `认证失败（HTTP ${ev.error_status}）：API Key 无效、已过期，或账号未登录`;
+        errorMsg = t('认证失败（HTTP {status}）：API Key 无效、已过期，或账号未登录', { status: ev.error_status });
         authAbort = true;
         proc.kill('SIGTERM');
-      } else step(`API 请求失败（${ev.error_status || ev.error}），第 ${ev.attempt}/${ev.max_retries} 次重试`, '', 'error');
+      } else step(t('API 请求失败（{err}），第 {n}/{max} 次重试', { err: ev.error_status || ev.error, n: ev.attempt, max: ev.max_retries }), '', 'error');
     } else if (ev.type === 'system' && ev.subtype === 'init') {
       if (ev.model) meta.model = ev.model;
       if (Array.isArray(ev.slash_commands)) onEvent({ type: 'slash', list: ev.slash_commands });
@@ -273,14 +274,14 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
     } else if (ev.type === 'assistant') {
       for (const block of ev.message?.content || []) {
         if (block.type === 'tool_use') step(toolTitle(block.name, block.input), JSON.stringify(block.input, null, 2));
-        else if (block.type === 'thinking' && block.thinking) step('思考', block.thinking, 'think');
+        else if (block.type === 'thinking' && block.thinking) step(t('思考'), block.thinking, 'think');
         else if (block.type === 'text' && !gotDelta) emitText(block.text);
       }
     } else if (ev.type === 'user') {
       for (const block of ev.message?.content || []) {
         if (block.type === 'tool_result') {
           const c = Array.isArray(block.content) ? block.content.map((x) => x.text || '').join('\n') : block.content;
-          step(block.is_error ? '工具返回错误' : '工具返回', c, block.is_error ? 'error' : 'result');
+          step(t(block.is_error ? '工具返回错误' : '工具返回'), c, block.is_error ? 'error' : 'result');
         }
       }
     } else if (ev.type === 'result') {
@@ -289,7 +290,7 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
         inTok: (ev.usage?.input_tokens || 0) + (ev.usage?.cache_read_input_tokens || 0) + (ev.usage?.cache_creation_input_tokens || 0),
         outTok: ev.usage?.output_tokens,
       });
-      if (ev.is_error) errorMsg = ev.result || ev.subtype || '执行出错';
+      if (ev.is_error) errorMsg = ev.result || ev.subtype || t('执行出错');
       else if (!text.trim() && ev.result) emitText(ev.result);
     }
   }
@@ -299,18 +300,18 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
     const item = ev.item;
     if (ev.type === 'item.completed' && item) {
       if (item.type === 'agent_message') emitText((text ? '\n\n' : '') + (item.text || ''));
-      else if (item.type === 'reasoning') step('思考', item.text, 'think');
+      else if (item.type === 'reasoning') step(t('思考'), item.text, 'think');
       else if (item.type === 'command_execution') step(`$ ${item.command}`, item.aggregated_output, item.exit_code ? 'error' : 'tool');
-      else if (item.type === 'file_change') step('修改文件', (item.changes || []).map((c) => `${c.kind} ${c.path}`).join('\n'));
+      else if (item.type === 'file_change') step(t('修改文件'), (item.changes || []).map((c) => `${c.kind} ${c.path}`).join('\n'));
       else if (item.type === 'mcp_tool_call') step(`MCP ${item.server}.${item.tool}`, JSON.stringify(item.arguments || {}, null, 2));
-      else if (item.type === 'web_search') step(`搜索 ${item.query}`, '');
-      else if (item.type === 'todo_list') step('计划', (item.items || []).map((t) => `${t.completed ? '✓' : '○'} ${t.text}`).join('\n'));
+      else if (item.type === 'web_search') step(`${t('搜索')} ${item.query}`, '');
+      else if (item.type === 'todo_list') step(t('计划'), (item.items || []).map((x) => `${x.completed ? '✓' : '○'} ${x.text}`).join('\n'));
       else if (item.type === 'error') errorMsg = item.message;
     } else if (ev.type === 'turn.completed' && ev.usage) {
       meta.inTok = (meta.inTok || 0) + (ev.usage.input_tokens || 0);
       meta.outTok = (meta.outTok || 0) + (ev.usage.output_tokens || 0);
     } else if (ev.type === 'turn.failed' || ev.type === 'error') {
-      errorMsg = ev.error?.message || ev.message || '执行出错';
+      errorMsg = ev.error?.message || ev.message || t('执行出错');
     }
   }
 
@@ -325,7 +326,7 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
   const done = new Promise((resolve) => {
     const finish = (r) => { meta.durationMs ||= Date.now() - started; resolve({ ...r, meta }); };
     proc.on('error', (e) => {
-      finish({ text, sessionId: newSession, error: e.code === 'ENOENT' ? `未找到命令 ${agent.bin}，请先在「工具」页面一键安装` : e.message });
+      finish({ text, sessionId: newSession, error: e.code === 'ENOENT' ? t('未找到命令 {bin}，请先在「工具」页面一键安装', { bin: agent.bin }) : e.message });
     });
     proc.on('close', (code, sig) => {
       const signal = sig || (treeKilled ? 'SIGTERM' : null);
@@ -333,7 +334,7 @@ function runAgent(agent, { prompt, cwd, sessionId, cfg = {}, provider, settings 
       if (agent.mode === 'text') text = text.replace(/\n+$/, '');
       if (signal && authAbort) return finish({ text, sessionId: newSession, error: errorMsg });
       if (signal) return finish({ text, sessionId: newSession, stopped: true });
-      if (code !== 0 && !errorMsg) errorMsg = clip(stripAnsi(stderr).trim(), 2000) || `进程退出码 ${code}`;
+      if (code !== 0 && !errorMsg) errorMsg = clip(stripAnsi(stderr).trim(), 2000) || t('进程退出码 {code}', { code });
       if (code === 0 && !text.trim() && !errorMsg && stderr.trim()) emitText(stripAnsi(stderr).trim());
       finish({ text, sessionId: newSession, error: errorMsg });
     });

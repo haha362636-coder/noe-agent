@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { baseEnv, resolveCommand } = require('./env');
+const { t } = require('./i18n');
 
 const HOME = os.homedir();
 const P = {
@@ -22,12 +23,12 @@ function run(argv, { env, cwd, timeout = 180000, onLog } = {}) {
     let out = '';
     const add = (c) => { const s = c.toString(); out += s; onLog?.(s); };
     proc.stdout.on('data', add); proc.stderr.on('data', add);
-    const timer = setTimeout(() => { out += '\n[超时，已终止]'; proc.kill('SIGTERM'); }, timeout);
-    proc.on('error', (e) => { clearTimeout(timer); resolve({ code: 127, out: e.code === 'ENOENT' ? `未找到命令 ${argv[0]}` : e.message }); });
+    const timer = setTimeout(() => { out += '\n' + t('[超时，已终止]'); proc.kill('SIGTERM'); }, timeout);
+    proc.on('error', (e) => { clearTimeout(timer); resolve({ code: 127, out: e.code === 'ENOENT' ? t('未找到命令 {bin}', { bin: argv[0] }) : e.message }); });
     proc.on('close', (code) => { clearTimeout(timer); resolve({ code, out: out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').trim() }); });
   });
 }
-const ok = (r, what) => { if (r.code !== 0) throw new Error(`${what}失败：${r.out.split('\n').slice(-6).join('\n') || '退出码 ' + r.code}`); return r; };
+const ok = (r, what) => { if (r.code !== 0) throw new Error(t('{what}失败：', { what: t(what) }) + (r.out.split('\n').slice(-6).join('\n') || t('退出码 {code}', { code: r.code }))); return r; };
 
 // ---------- JSON 配置文件 ----------
 function readJson(file, fallback = {}) {
@@ -35,7 +36,7 @@ function readJson(file, fallback = {}) {
   const raw = fs.readFileSync(file, 'utf8');
   if (!raw.trim()) return fallback;
   try { return JSON.parse(raw); }
-  catch (e) { throw new Error(`${file.replace(HOME, '~')} 不是合法的 JSON，为避免破坏原配置已停止修改（${e.message}）`); }
+  catch (e) { throw new Error(t('{file} 不是合法的 JSON，为避免破坏原配置已停止修改（{err}）', { file: file.replace(HOME, '~'), err: e.message })); }
 }
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -66,7 +67,7 @@ const geminiAdapter = (file) => ({
       : c.type === 'sse' ? { url: c.url, ...(Object.keys(c.headers || {}).length ? { headers: c.headers } : {}) }
       : { httpUrl: c.url, ...(Object.keys(c.headers || {}).length ? { headers: c.headers } : {}) };
     writeJson(file, s);
-    return ['只会在受信任的目录中加载 MCP（第一次在某个目录运行时会询问是否信任）'];
+    return [t('只会在受信任的目录中加载 MCP（第一次在某个目录运行时会询问是否信任）')];
   },
   async remove(name) {
     const s = readJson(file);
@@ -88,7 +89,7 @@ const ADAPTERS = {
         : { type: c.type, url: c.url, ...(Object.keys(c.headers || {}).length ? { headers: c.headers } : {}) };
       // 已存在时先删再加，等同于覆盖
       await run(['claude', 'mcp', 'remove', '-s', 'user', name]);
-      ok(await run(['claude', 'mcp', 'add-json', '-s', 'user', name, JSON.stringify(json)]), '添加到 Claude Code ');
+      ok(await run(['claude', 'mcp', 'add-json', '-s', 'user', name, JSON.stringify(json)]), '添加到 Claude Code');
     },
     async remove(name) { ok(await run(['claude', 'mcp', 'remove', '-s', 'user', name]), '从 Claude Code 移除'); },
     loginArgv: (name) => ['claude', 'mcp', 'login', name],
@@ -121,12 +122,12 @@ const ADAPTERS = {
           const envName = 'NOE_MCP_' + name.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_TOKEN';
           ctx.setEnv(envName, auth[1].replace(/^Bearer\s+/i, ''));
           argv.push('--bearer-token-env-var', envName);
-          notes.push(`Token 保存在 Noe 中，只有从 Noe 启动的 Codex 能使用（环境变量 ${envName}）`);
+          notes.push(t('Token 保存在 Noe 中，只有从 Noe 启动的 Codex 能使用（环境变量 {env}）', { env: envName }));
         }
         const others = Object.keys(c.headers || {}).filter((k) => k.toLowerCase() !== 'authorization');
-        if (others.length) notes.push(`Codex 不支持自定义请求头，已忽略：${others.join(', ')}`);
+        if (others.length) notes.push(t('Codex 不支持自定义请求头，已忽略：') + others.join(', '));
       }
-      ok(await run(argv), '添加到 Codex ');
+      ok(await run(argv), '添加到 Codex');
       return notes;
     },
     async remove(name) { ok(await run(['codex', 'mcp', 'remove', name]), '从 Codex 移除'); },
@@ -182,7 +183,7 @@ function fillTemplate(entry, values, ctx) {
   for (const p of entry.params || []) {
     const val = String(values[p.key] ?? '').trim();
     v[p.key] = val || (p.default ? sub(p.default) : '');
-    if (p.required && !v[p.key]) throw new Error(`请填写「${p.label}」`);
+    if (p.required && !v[p.key]) throw new Error(t('请填写「{label}」', { label: t(p.label) }));
   }
   // 可选参数留空时，去掉引用它的 env / header
   const empty = (str) => { const ks = [...String(str).matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]); return ks.length > 0 && ks.every((k) => !v[k]); };
@@ -197,7 +198,7 @@ function fillTemplate(entry, values, ctx) {
 function parseImport(text) {
   let j;
   try { j = JSON.parse(String(text).trim().replace(/,\s*([}\]])/g, '$1')); }
-  catch (e) { throw new Error('不是合法的 JSON：' + e.message); }
+  catch (e) { throw new Error(t('不是合法的 JSON：') + e.message); }
   let map = j.mcpServers || j.servers || j.mcp || j;
   if (map.command || map.url || map.httpUrl) map = { 'imported-server': map };
   const out = [];
@@ -207,18 +208,18 @@ function parseImport(text) {
     else if (c.type === 'remote') out.push({ name, type: 'http', url: c.url, headers: c.headers || {} });
     else if (c.command || c.url || c.httpUrl || c.serverUrl) out.push({ name, ...fromClaudeLike({ ...c, url: c.url || c.serverUrl }) });
   }
-  if (!out.length) throw new Error('没有找到 MCP 服务器配置');
+  if (!out.length) throw new Error(t('没有找到 MCP 服务器配置'));
   return out;
 }
 
 function normalize(c) {
   const name = String(c.name || '').trim();
-  if (!/^[\w.-]+$/.test(name)) throw new Error('名称只能包含字母、数字、下划线、点和短横线');
+  if (!/^[\w.-]+$/.test(name)) throw new Error(t('名称只能包含字母、数字、下划线、点和短横线'));
   if (c.type === 'stdio') {
-    if (!c.command) throw new Error('请填写启动命令');
+    if (!c.command) throw new Error(t('请填写启动命令'));
     return { name, type: 'stdio', command: String(c.command).trim(), args: (c.args || []).map(String), env: c.env || {} };
   }
-  if (!/^https?:\/\//.test(c.url || '')) throw new Error('请填写正确的 URL');
+  if (!/^https?:\/\//.test(c.url || '')) throw new Error(t('请填写正确的 URL'));
   return { name, type: c.type === 'sse' ? 'sse' : 'http', url: c.url.trim(), headers: c.headers || {} };
 }
 

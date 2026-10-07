@@ -1,4 +1,6 @@
 // 公共工具：状态、请求、图标、头像、弹层、提示
+import { t, getLang } from './i18n.js';
+export { t };
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -49,14 +51,15 @@ export function fmtTime(ts) {
   const hm = d.toTimeString().slice(0, 5);
   if (d.toDateString() === now.toDateString()) return hm;
   const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return '昨天 ' + hm;
+  if (d.toDateString() === y.toDateString()) return t('昨天') + ' ' + hm;
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 export function fmtDay(ts) {
   const d = new Date(ts), now = new Date();
-  if (d.toDateString() === now.toDateString()) return '今天';
+  if (d.toDateString() === now.toDateString()) return t('今天');
   const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return '昨天';
+  if (d.toDateString() === y.toDateString()) return t('昨天');
+  if (getLang() !== 'zh') return d.toLocaleDateString(getLang(), { month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
   return `${d.getFullYear() === now.getFullYear() ? '' : d.getFullYear() + '年'}${d.getMonth() + 1}月${d.getDate()}日`;
 }
 export const fmtNum = (n) => (n == null ? '' : n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n));
@@ -68,16 +71,16 @@ export function modelInfo(agentId, id) {
   const list = S.models?.agents?.[agentId]?.models || [];
   return list.find((m) => m.id === id) || (S.models?.known?.[id] ? { id, ...S.models.known[id] } : null);
 }
-export const modelName = (agentId, id) => modelInfo(agentId, id)?.name || id;
-export const effortName = (e) => S.models?.effortLabel?.[e] || e;
+export const modelName = (agentId, id) => t(modelInfo(agentId, id)?.name || id);
+export const effortName = (e) => t(S.models?.effortLabel?.[e] || e);
 
 /** agent 当前的 API 来源描述 */
 export function authInfo(a) {
   if (!a) return { label: '', model: '' };
   const p = a.config.mode === 'provider' ? providerById(a.config.providerId) : null;
   const modelId = a.noModel ? '' : a.config.model || (p ? p.models?.[0] : '') || '';
-  const model = a.noModel ? '' : modelId ? modelName(a.id, modelId) : '默认模型';
-  return { provider: p, label: p ? p.name : '官方登录', model, modelId, effort: a.config.effort || '', color: p ? p.color : a.color };
+  const model = a.noModel ? '' : modelId ? modelName(a.id, modelId) : t('默认模型');
+  return { provider: p, label: p ? p.name : t('官方登录'), model, modelId, effort: a.config.effort || '', color: p ? p.color : a.color };
 }
 /** 厂商是否适配某个 agent */
 export const fits = (a, p) => (a.protocols || []).some((k) => p.urls?.[k]);
@@ -153,12 +156,12 @@ export function modal({ title, body, actions = [], width = 460, onMount }) {
   return { el: wrap, close };
 }
 
-export function confirmBox(text, { danger, ok = '确定' } = {}) {
+export function confirmBox(text, { danger, ok = t('确定') } = {}) {
   return new Promise((resolve) => {
     let done = false;
     const m = modal({
-      title: '请确认', body: `<p class="confirm-text">${esc(text)}</p>`, width: 400,
-      actions: [{ label: '取消', onClick: () => { done = true; resolve(false); } }, { label: ok, primary: !danger, danger, onClick: () => { done = true; resolve(true); } }],
+      title: t('请确认'), body: `<p class="confirm-text">${esc(text)}</p>`, width: 400,
+      actions: [{ label: t('取消'), onClick: () => { done = true; resolve(false); } }, { label: ok, primary: !danger, danger, onClick: () => { done = true; resolve(true); } }],
     });
     const obs = new MutationObserver(() => { if (!document.body.contains(m.el)) { obs.disconnect(); if (!done) resolve(false); } });
     obs.observe(document.body, { childList: true });
@@ -170,7 +173,7 @@ export async function copyText(text) {
   catch {
     const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
   }
-  toast('已复制', 'ok');
+  toast(t('已复制'), 'ok');
 }
 
 // ---------- 图标（线性风格） ----------
@@ -228,6 +231,9 @@ const P = {
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
   wifi: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0M12 20h.01"/>',
+  swords: '<path d="M14.5 17.5 3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M14.5 6.5 18 3h3v3l-3.5 3.5M5 14l4 4M7 17l-3 3M3 19l2 2"/>',
+  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>',
+  shuffle: '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
 };
 export function icon(name, size = 18) {
   return `<svg class="i" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${P[name] || ''}</svg>`;

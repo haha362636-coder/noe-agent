@@ -1,5 +1,6 @@
 // 入口：加载状态、实时事件、视图切换、全局快捷键
-import { $, $$, S, api, toast, on, emit, agentById, closeMenu } from './core.js';
+import { $, $$, S, api, toast, on, emit, agentById, closeMenu, menu, t } from './core.js';
+import { LANGS, setLang, detectLang, getLang, translateDom } from './i18n.js';
 import {
   renderSidebar, openChat, closeChat, renderChatShell, renderChatHead, renderMessages, appendMessage, patchMessage, schedulePatch,
   sendText, sourceMenu, openNewGroup, createTemplateGroup, setupDnD, quickSwitch,
@@ -22,30 +23,48 @@ applyTheme();
 const isWin = /Windows/i.test(navigator.userAgent);
 if (new URLSearchParams(location.search).has('app') && !isWin) document.documentElement.classList.add('electron');
 // Windows 上快捷键是 Ctrl，把界面里的 ⌘ 提示换掉
+const swapKeys = (root) => {
+  if (!isWin) return;
+  for (const el of root.querySelectorAll('[title*="⌘"]')) el.title = el.title.replace(/⌘/g, 'Ctrl+');
+  for (const el of root.querySelectorAll('kbd')) if (el.textContent.includes('⌘')) el.textContent = el.textContent.replace(/⌘/g, 'Ctrl+');
+};
 if (isWin) {
-  const swap = (root) => {
-    for (const el of root.querySelectorAll('[title*="⌘"]')) el.title = el.title.replace(/⌘/g, 'Ctrl+');
-    for (const el of root.querySelectorAll('kbd')) if (el.textContent.includes('⌘')) el.textContent = el.textContent.replace(/⌘/g, 'Ctrl+');
-  };
-  swap(document);
-  new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) swap(n.parentNode || n); })
+  new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) swapKeys(n.parentNode || n); })
     .observe(document.body, { childList: true, subtree: true });
+}
+
+// ---------- 语言 ----------
+/** 切换界面语言：存到服务端（系统消息、发给 AI 的提示词也跟着变），然后整页刷新 */
+async function switchLang(id) {
+  if (id === getLang()) return;
+  try { await api('PUT', '/api/settings', { lang: id }); } catch (e) { return toast(e.message, 'error'); }
+  try { localStorage.setItem('noe.lang', id); } catch { /* 忽略 */ }
+  location.reload();
+}
+function langMenu(anchor) {
+  menu(anchor, [{ header: t('语言 / Language') }, ...LANGS.map((l) => ({ label: l.name, check: l.id === getLang(), onClick: () => switchLang(l.id) }))], { width: 200 });
 }
 
 // ---------- 状态 ----------
 let loading = null;
+let stale = false;
 let modelsLoading = null;
 async function loadState() {
-  if (loading) return loading;
+  // 正在加载时又被要求刷新：这次请求可能发生在变化之前（比如刚新建的群还不在里面），
+  // 所以等它结束后再拉一次，调用方拿到的一定是最新状态
+  if (loading) { stale = true; return loading; }
   loading = (async () => {
     // 模型目录要调用 codex debug models，可能要好几秒：不等它，先把界面画出来，到了再刷新
     if (!S.models && !modelsLoading) {
       modelsLoading = api('GET', '/api/models').then((m) => { S.models = m; reload(); }).catch(() => { modelsLoading = null; });
     }
-    const st = await api('GET', '/api/state');
-    const { chats, ...rest } = st;
-    Object.assign(S, rest);
-    S.chats = chats;
+    do {
+      stale = false;
+      const st = await api('GET', '/api/state');
+      const { chats, ...rest } = st;
+      Object.assign(S, rest);
+      S.chats = chats;
+    } while (stale);
     renderSidebar();
     if (S.view === 'tools') renderTools();
     if (S.view === 'providers') renderProviders({ soft: true });
@@ -72,13 +91,14 @@ on('goto', switchView);
 on('reload', reload);
 on('open-chat', (id) => openChat(id));
 on('theme', applyTheme);
+on('lang', switchLang);
 
 // ---------- 实时事件 ----------
 function notify(m) {
   if (m.status === 'streaming' || m.status === 'stopped') return;
   if (!S.settings.notify || document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return;
   const a = agentById(m.sender); if (!a) return;
-  const n = new Notification(`${a.name} 回复了`, { body: (m.error ? '⚠ ' + m.error : m.text).slice(0, 120), silent: false });
+  const n = new Notification(t('{name} 回复了', { name: a.name }), { body: (m.error ? '⚠ ' + m.error : m.text).slice(0, 120), silent: false });
   n.onclick = () => { window.focus(); switchView('chat'); openChat(m.chatId); };
 }
 
@@ -144,7 +164,8 @@ function connectEvents() {
     const el = document.querySelector(`[data-log="${agentId}"]`);
     if (el) { el.textContent = S.logs[agentId]; el.scrollTop = el.scrollHeight; }
   });
-  sub('install.done', ({ agentId, ok, label }) => toast(`${agentById(agentId)?.name || agentId} ${label}${ok ? '成功' : '失败，请查看日志'}`, ok ? 'ok' : 'error'));
+  sub('install.done', ({ agentId, ok, label }) => toast(t(ok ? '{name} {label}成功' : '{name} {label}失败，请查看日志', { name: agentById(agentId)?.name || agentId, label: t(label) }), ok ? 'ok' : 'error'));
+  sub('arena.stats', (stats) => { S.arenaStats = stats; });
   sub('term.open', onTermOpen);
   sub('term.data', onTermData);
   sub('term.exit', onTermExit);
@@ -164,7 +185,7 @@ document.addEventListener('click', (e) => {
   if (fp) {
     e.preventDefault();
     api('POST', '/api/open', { path: fp.dataset.openPath, chatId: S.chatId, reveal: e.altKey })
-      .then((r) => toast(`已打开 ${r.path.replace(S.home, '~')}`, 'ok')).catch((er) => toast(er.message, 'error'));
+      .then((r) => toast(t('已打开 {path}', { path: r.path.replace(S.home, '~') }), 'ok')).catch((er) => toast(er.message, 'error'));
     return;
   }
   // 兜底：任何指向 Noe 自己地址的普通链接都不要让窗口跳走
@@ -174,7 +195,7 @@ document.addEventListener('click', (e) => {
     if (href && href !== '#' && !/^(https?:|mailto:)/i.test(href)) { e.preventDefault(); api('POST', '/api/open', { path: href, chatId: S.chatId }).catch((er) => toast(er.message, 'error')); return; }
   }
   const term = e.target.closest('[data-term]');
-  if (term) { const t = S.terms.find((x) => x.id === term.dataset.term); return t ? focusTerm(t.id) : toast('这个终端已经关闭了'); }
+  if (term) { const tm = S.terms.find((x) => x.id === term.dataset.term); return tm ? focusTerm(tm.id) : toast(t('这个终端已经关闭了')); }
   const src = e.target.closest('[data-source]');
   if (src) { const a = agentById(src.dataset.source); if (a) return sourceMenu(src, a); }
   if (e.target.closest('[data-new-group]')) return openNewGroup();
@@ -193,6 +214,14 @@ document.addEventListener('keydown', (e) => {
 // ---------- 启动 ----------
 let booted = false;
 async function boot() {
+  // 先用上次的语言把界面画出来，避免闪一下中文；服务端的设置随后为准
+  let saved = null;
+  try { saved = localStorage.getItem('noe.lang'); } catch { /* 忽略 */ }
+  await setLang(saved || detectLang());
+  translateDom();
+  swapKeys(document);
+  $('#rail-lang-code').textContent = LANGS.find((l) => l.id === getLang())?.short || '';
+  $('#rail-lang').onclick = (e) => langMenu(e.currentTarget);
   $$('.rail-btn[data-view]').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('#rail-term').onclick = () => toggleTerm();
   $('#rail-theme').onclick = () => {
@@ -207,6 +236,9 @@ async function boot() {
   bindExtensions();
   setupDnD();
   await loadState();
+  // 第一次启动：把按系统语言选出的界面语言存到服务端，系统消息和发给 AI 的提示词用同一种语言
+  if (!S.settings.lang) S.settings = await api('PUT', '/api/settings', { lang: getLang() }).catch(() => S.settings);
+  else if (S.settings.lang !== getLang() && LANGS.some((l) => l.id === S.settings.lang)) { await setLang(S.settings.lang); return location.reload(); }
   initTerminals();
   let last = null;
   try { last = localStorage.getItem('noe.lastChat'); } catch { /* 忽略 */ }
@@ -215,4 +247,4 @@ async function boot() {
   booted = true;
   connectEvents();
 }
-boot().catch((e) => { console.error(e); toast('启动失败：' + e.message, 'error'); });
+boot().catch((e) => { console.error(e); toast(t('启动失败：') + e.message, 'error'); });

@@ -69,7 +69,8 @@ if (!app.requestSingleInstanceLock()) {
     win.show(); win.focus();
   });
   if (process.platform === 'win32') app.setAppUserModelId('com.noeagent.app'); // 任务栏分组和系统通知需要
-  app.whenReady().then(createWindow);
+  // 告诉本地服务系统界面语言：用户还没在设置里选语言时，系统消息和界面都按它来
+  app.whenReady().then(() => { process.env.NOE_LOCALE ||= app.getLocale(); createWindow(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
   app.on('before-quit', () => server.shutdown());

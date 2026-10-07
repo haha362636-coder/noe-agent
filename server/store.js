@@ -16,6 +16,7 @@ const defaults = () => ({
     askCwd: true,         // 新会话第一次发消息前先选择工作目录
     snapshots: true,      // 时光机：记录每条 AI 回复改了哪些文件，可一键撤销
     recentDirs: [],       // 最近使用的工作目录
+    lang: '',             // 界面语言：zh / en，空表示还没选（按系统语言）
   },
   providers: [],          // 模型厂商 { id, preset, name, color, apiKey, urls: {anthropic, openai, gemini}, models: [], smallModel, note }
   agentConfig: {},        // { [agentId]: { mode: 'official'|'provider', providerId, model, extraEnv } }
@@ -24,6 +25,7 @@ const defaults = () => ({
   mcpEnv: {},             // 供 CLI 读取的 MCP 密钥环境变量
   chats: [],              // { id, type: 'dm'|'group', name, members, cwd, sessions, pinned, createdAt }
   messages: {},           // { [chatId]: Message[] }
+  arenaStats: {},         // AI 擂台战绩 { [agentId]: { wins, played } }
 });
 
 let data = null;
@@ -52,7 +54,7 @@ function load() {
     if (key && !cfg.mode) {
       const pid = 'p-migrated-' + id;
       data.providers.push({
-        id: pid, preset: 'custom', name: `${id} 原有配置`, color: '#64748b', apiKey: key,
+        id: pid, preset: 'custom', name: `${id} (migrated)`, color: '#64748b', apiKey: key,
         urls: { [o[2]]: cfg.env[o[1]] || o[3] }, models: cfg.model ? [cfg.model] : [], smallModel: '', note: '', createdAt: Date.now(),
       });
       Object.assign(cfg, { mode: 'provider', providerId: pid });
@@ -62,7 +64,10 @@ function load() {
   }
   // 上次异常退出时仍在“生成中”的消息标记为中断
   for (const list of Object.values(data.messages)) {
-    for (const m of list) if (m.status === 'streaming') m.status = 'stopped';
+    for (const m of list) {
+      if (m.status === 'streaming') m.status = 'stopped';
+      if (m.kind === 'arena') for (const e of m.arena.entries) if (['preparing', 'running'].includes(e.status)) e.status = 'stopped';
+    }
   }
   return data;
 }
