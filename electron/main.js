@@ -39,7 +39,7 @@ if (!app.requestSingleInstanceLock()) {
       title: 'Noe Agent',
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
       autoHideMenuBar: process.platform !== 'darwin', // Windows：隐藏 File/Edit 菜单栏，按 Alt 仍可显示
-      backgroundColor: '#f6f7f9',
+      backgroundColor: '#f7f7f8',
       show: false,
       webPreferences: { contextIsolation: true },
     });

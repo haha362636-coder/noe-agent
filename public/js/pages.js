@@ -2,6 +2,10 @@
 import { $, $$, esc, S, api, toast, icon, avatar, agentById, providerById, authInfo, fits, modal, confirmBox, emit, menu, t } from './core.js';
 import { LANGS, getLang } from './i18n.js';
 import { runLogin, sourceMenu, modelPicker } from './chat.js';
+import { providerLogo, logoTile } from './brands.js';
+
+/** 厂商 logo：预设或名称能认出来就用官方图标，否则显示首字母 */
+const pLogo = (p, size = 36, name = p.name) => logoTile(providerLogo(p), size, p.preset === 'custom' && !p.id ? icon('plus', size * 0.45) : esc(name.slice(0, 1)), 'p-logo');
 
 // ======================= 工具页 =======================
 const openLog = new Set();
@@ -161,7 +165,7 @@ function listHtml() {
   return S.providers.map((x) => {
     const users = S.agents.filter((a) => a.config.mode === 'provider' && a.config.providerId === x.id);
     return `<button class="pitem ${x.id === S.providerSel ? 'active' : ''}" data-p="${x.id}">
-      <span class="p-logo" style="--c:${x.color}">${esc(x.name.slice(0, 1))}</span>
+      ${pLogo(x)}
       <span class="p-meta"><b>${esc(x.name)}</b><small>${x.hasKey ? t('{n} 个模型', { n: x.models.length }) : `<span class="warn-text">${t('未填写 Key')}</span>`} · ${Object.keys(x.urls).map((k) => k[0].toUpperCase() + k.slice(1)).join(' / ') || t('无地址')}</small></span>
       <span class="p-users">${users.map((a) => avatar(a, 18)).join('')}</span></button>`;
   }).join('') || `<div class="plist-empty">${icon('key', 28)}<p>${t('还没有添加厂商')}</p><button class="btn primary sm" data-add-first>${icon('plus', 14)} ${t('添加第一个')}</button></div>`;
@@ -191,7 +195,7 @@ const URL_FIELDS = [
 function editorHtml(p) {
   const preset = S.presets.find((x) => x.preset === p.preset);
   return `<div class="pe" data-pe="${p.id}">
-    <div class="pe-head"><span class="p-logo lg" style="--c:${p.color}">${esc(p.name.slice(0, 1))}</span>
+    <div class="pe-head">${pLogo(p, 48)}
       <div class="pe-title"><input class="title-input" name="name" value="${esc(p.name)}"><small>${preset && preset.preset !== 'custom' ? t('预设：') + esc(t(preset.name)) : t('自定义厂商')}</small></div>
       <span class="grow"></span>
       <button class="icon-btn ghost" data-act="delete" title="${t('删除厂商')}">${icon('trash', 17)}</button>
@@ -354,7 +358,7 @@ function addProviderDialog() {
   modal({
     title: t('添加模型厂商'), width: 640,
     body: `<div class="preset-grid">${S.presets.map((p) => `<button class="preset" data-preset="${p.preset}">
-      <span class="p-logo" style="--c:${p.color}">${esc(t(p.name).slice(0, 1))}</span><b>${esc(t(p.name))}</b>
+      ${pLogo(p, 36, t(p.name))}<b>${esc(t(p.name))}</b>
       <small>${Object.keys(p.urls).map((k) => k[0].toUpperCase() + k.slice(1)).join(' · ')}</small></button>`).join('')}</div>`,
     onMount: (el, close) => {
       el.addEventListener('click', async (e) => {

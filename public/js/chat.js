@@ -4,6 +4,7 @@ import {
   authInfo, fits, menu, modal, confirmBox, copyText, emit, modelInfo, effortName, t,
 } from './core.js';
 import { md, renderMentions } from './markdown.js';
+import { agentLogo, providerLogo, modelLogo, logoTile } from './brands.js';
 
 const READ_KEY = 'noe.read';
 let readMap = {};
@@ -236,7 +237,7 @@ function sourcePill(a) {
   const info = authInfo(a);
   const warn = a.config.mode === 'official' && a.auth && !a.auth.loggedIn && a.canLogin;
   return `<button class="source-pill ${warn ? 'warn' : ''}" data-source="${a.id}" data-menu-anchor title="${t('切换 API 来源 / 模型')}">
-    <i class="dot" style="background:${warn ? 'var(--warn)' : info.provider ? info.color : 'var(--ok)'}"></i>
+    ${info.provider && !warn ? logoTile(providerLogo(info.provider), 16, esc(info.provider.name.slice(0, 1)), 'mini') : `<i class="dot" style="background:${warn ? 'var(--warn)' : 'var(--ok)'}"></i>`}
     <span>${esc(info.label)}${warn ? t('（未登录）') : ''}</span>${info.model ? `<span class="model">${esc(info.model)}${info.effort ? ' · ' + esc(effortName(info.effort)) : ''}</span>` : ''}${icon('chevron', 14)}</button>`;
 }
 
@@ -342,7 +343,7 @@ function msgHtml(m, prev) {
   return `<div class="msg ${compact ? 'compact' : ''} ${m.status}" id="m-${m.id}">
     ${compact ? '<div class="avatar-space"></div>' : avatar(a, 34)}
     <div class="body">
-      ${compact ? '' : `<div class="who"><b style="color:${a?.color || 'inherit'}">${esc(a?.name || m.sender)}</b>
+      ${compact ? '' : `<div class="who"><b>${esc(a?.name || m.sender)}</b>
         ${meta.provider || meta.model ? `<span class="model-tag">${esc([t(meta.provider), meta.model].filter(Boolean).join(' · '))}</span>` : ''}${relay}<span class="time">${fmtTime(m.ts)}</span></div>`}
       ${stepsHtml(m)}
       ${body ? `<div class="bubble md ${m.status === 'streaming' && m.text ? 'streaming' : ''}">${body}</div>` : ''}
@@ -603,9 +604,9 @@ export function sourceMenu(anchor, a) {
   const ok = S.providers.filter((p) => fits(a, p));
   const no = S.providers.filter((p) => !fits(a, p));
   for (const p of ok) {
-    items.push({ label: p.name, sub: p.hasKey ? t('{n} 个模型', { n: p.models.length }) : t('⚠ 未填写 API Key'), icon: `<i class="dot lg" style="background:${p.color}"></i>`, check: cfg.mode === 'provider' && cfg.providerId === p.id, onClick: () => setCfg(a, { mode: 'provider', providerId: p.id, model: p.models.includes(cfg.model) ? cfg.model : '' }) });
+    items.push({ label: p.name, sub: p.hasKey ? t('{n} 个模型', { n: p.models.length }) : t('⚠ 未填写 API Key'), icon: logoTile(providerLogo(p), 18, esc(p.name.slice(0, 1)), 'mini'), check: cfg.mode === 'provider' && cfg.providerId === p.id, onClick: () => setCfg(a, { mode: 'provider', providerId: p.id, model: p.models.includes(cfg.model) ? cfg.model : '' }) });
   }
-  for (const p of no) items.push({ label: p.name, sub: t('不兼容：缺少 {proto} 地址', { proto: a.protocols.map((k) => t(S.protocols[k])).join('/') }), icon: `<i class="dot lg" style="background:${p.color};opacity:.4"></i>`, disabled: true });
+  for (const p of no) items.push({ label: p.name, sub: t('不兼容：缺少 {proto} 地址', { proto: a.protocols.map((k) => t(S.protocols[k])).join('/') }), icon: logoTile(providerLogo(p), 18, esc(p.name.slice(0, 1)), 'mini'), disabled: true });
   if (!a.noModel) {
     const info = authInfo(a);
     items.push({ divider: true }, { header: t('模型') });
@@ -651,8 +652,9 @@ export function modelPicker(a) {
         const shown = list.filter((m) => !ql || (m.id + (m.name || '') + (m.desc || '') + t(m.desc || '')).toLowerCase().replace(/\s+/g, '').includes(ql));
         const custom = q.trim() && !list.some((m) => m.id === q.trim());
         el.querySelector('#mp-list').innerHTML = `
-          ${!q ? `<button class="mp-item ${!cur ? 'on' : ''}" data-model=""><div class="mp-main"><b>${t('默认')}</b><small>${t(a.config.mode === 'provider' ? '厂商列表里的第一个模型' : '由 CLI 自己决定')}</small></div>${!cur ? icon('check', 16) : ''}</button>` : ''}
+          ${!q ? `<button class="mp-item ${!cur ? 'on' : ''}" data-model="">${logoTile(null, 30, icon('sparkles', 15))}<div class="mp-main"><b>${t('默认')}</b><small>${t(a.config.mode === 'provider' ? '厂商列表里的第一个模型' : '由 CLI 自己决定')}</small></div>${!cur ? icon('check', 16) : ''}</button>` : ''}
           ${shown.map((m) => `<button class="mp-item ${cur === m.id ? 'on' : ''}" data-model="${esc(m.id)}">
+            ${logoTile(modelLogo(m.id) || agentLogo(a), 30, esc((m.name || m.id).slice(0, 1)))}
             <div class="mp-main"><div class="mp-name"><b>${esc(t(m.name || m.id))}</b>${(m.tags || []).map((tag) => `<span class="mtag ${TAG_CLS[tag] ?? ''}">${esc(t(tag))}</span>`).join('')}</div>
               <small><code>${esc(m.id)}</code>${m.desc ? ' · ' + esc(t(m.desc)) : ''}</small></div>
             ${m.price ? `<span class="mp-price">${esc(m.price)}<i>${t('/百万 token')}</i></span>` : ''}${cur === m.id ? icon('check', 16) : ''}</button>`).join('')}
@@ -818,7 +820,7 @@ function celebrate(el) {
   const box = document.createElement('div');
   box.className = 'confetti';
   Object.assign(box.style, { left: r.left + r.width / 2 + 'px', top: r.top + 24 + 'px' });
-  const colors = ['#6366f1', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899', '#0ea5e9'];
+  const colors = ['#18181b', '#3f3f46', '#71717a', '#a1a1aa', '#d4d4d8', '#f4f4f5'];
   box.innerHTML = Array.from({ length: 36 }, (_, i) => `<i style="--x:${Math.cos(i) * (60 + (i * 37) % 120)}px;--y:${-60 - (i * 53) % 140}px;--r:${(i * 47) % 360}deg;background:${colors[i % colors.length]};animation-delay:${(i % 6) * 12}ms"></i>`).join('');
   document.body.appendChild(box);
   setTimeout(() => box.remove(), 1600);

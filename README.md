@@ -8,7 +8,7 @@
 
 简体中文 | [English](README.en.md)
 
-![版本](https://img.shields.io/badge/version-0.2.0--beta.4-orange)
+![版本](https://img.shields.io/badge/version-0.2.0--beta.5-lightgrey)
 ![平台](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![协议](https://img.shields.io/badge/license-MIT-blue)
 
@@ -59,10 +59,17 @@ xattr -cr "/Applications/Noe Agent.app"
 
 系统要求 Windows 10（1809 及以上）或 Windows 11，64 位；ARM 版 Windows 也可以通过系统自带的转译运行。和 Mac 版的区别：快捷键用 `Ctrl`（如 `Ctrl+K`、`Ctrl+J`），内置终端默认 PowerShell，数据保存在 `C:\Users\你的用户名\.noe-agent`。
 
+## 界面预览
+
+| 浅色 | 深色 |
+|---|---|
+| ![浅色模式](docs/screenshots/light.png) | ![深色模式](docs/screenshots/dark.png) |
+
 ## 功能
 
-- **AI 擂台（新）**：同一个任务同时交给几个 AI，每个 AI 在自己的项目副本里干活、互不干扰。默认盲评（只显示「选手 A / B / C」），实时对比回答、改了哪些文件、耗时和花费，还会标出最快、最省的选手；你选出胜者后才揭晓身份，只有胜者的改动会合并进工作目录，并且可以用时光机一键撤销。累计战绩做成排行榜。群聊里点输入框下的「擂台」或输入 `/arena 任务`，私聊里 `/arena 任务 @codex` 拉别的 AI 一起比。
-- **多语言（新）**：界面支持简体中文和 English，左下角地球按钮或「设置 → 语言」一键切换；系统消息、命令回复、发给 AI 的提示词也跟着切换，AI 会用对应语言回复。第一次打开时按系统语言自动选择。
+- **灰白新界面（新）**：浅色是白底墨色，深色是石墨灰底月白色，左下角一键切换（也可在「设置 → 外观」跟随系统）。各个 AI 和模型厂商都显示官方 logo（Codex 用的是 Codex 应用图标），模型选择器里每个模型也带厂商图标；图标随 App 打包，离线可用。
+- **AI 擂台**：同一个任务同时交给几个 AI，每个 AI 在自己的项目副本里干活、互不干扰。默认盲评（只显示「选手 A / B / C」），实时对比回答、改了哪些文件、耗时和花费，还会标出最快、最省的选手；你选出胜者后才揭晓身份，只有胜者的改动会合并进工作目录，并且可以用时光机一键撤销。累计战绩做成排行榜。群聊里点输入框下的「擂台」或输入 `/arena 任务`，私聊里 `/arena 任务 @codex` 拉别的 AI 一起比。
+- **多语言**：界面支持简体中文和 English，左下角地球按钮或「设置 → 语言」一键切换；系统消息、命令回复、发给 AI 的提示词也跟着切换，AI 会用对应语言回复。第一次打开时按系统语言自动选择。
 - **AI 工具**：Claude Code、Codex、DeepSeek Harness、Gemini CLI、Qwen Code、OpenCode 一键安装 / 更新 / 卸载，显示官方账号登录状态；支持接入任意自定义 CLI。
 - **模型厂商**：预设 Anthropic、OpenAI、DeepSeek、智谱 GLM、Kimi、阿里云百炼、MiniMax、OpenRouter、硅基流动、Gemini，也可添加任意兼容接口；支持连通性测试、拉取模型列表。
 - **一键切换**：每个 AI 可以在「官方登录」和任意厂商 API 之间随时切换（工具卡片、聊天顶部、或 `/use`）。
@@ -116,10 +123,12 @@ server/arena.js       AI 擂台：为每位选手复制项目副本、并行运�
 server/i18n.js        服务端多语言（系统消息、错误提示、发给 AI 的提示词）
 server/store.js       数据保存在 ~/.noe-agent/data.json（仅本机，权限 600）
 public/               界面（原生 HTML / CSS / JS）
+public/js/brands.js   品牌图标：AI CLI、模型厂商、模型 → 官方 logo 的对应关系
+public/brand/         官方 logo（SVG，来自 LobeHub Icons）
 public/js/i18n.js     界面多语言：以中文为键查表，查不到就显示中文
 public/locales/       语言包（en.json），前后端共用；新增语言放一份同结构的 JSON 并在 i18n.js 登记
 public/vendor/        打包好的 marked、DOMPurify、highlight.js、xterm（npm run build:vendor 重新生成）
-build/                应用图标
+build/                应用图标（改 icon.svg 后执行 npm run make:icon 生成 icon.png，Mac / Windows 共用）
 ```
 
 ## 注意事项
@@ -132,7 +141,7 @@ build/                应用图标
 
 ## 致谢
 
-感谢 [Claude Code](https://claude.com/claude-code) 与 [Electron](https://www.electronjs.org)。
+感谢 [Claude Code](https://claude.com/claude-code) 与 [Electron](https://www.electronjs.org)。品牌图标来自 [LobeHub Icons](https://github.com/lobehub/lobe-icons)（MIT），各 logo 的商标归各自公司所有。
 
 ## 支持项目
 

@@ -126,24 +126,43 @@ gh release create v0.2.0-beta.2 release/*.dmg release/SHA256SUMS.txt --title "No
 
 ---
 
-## 5. 以后发布新版本（以 0.2.0-beta.2 为例）
+## 5. 以后发布新版本（以 0.2.0-beta.5 为例，Mac + Windows 一起发）
 
-整个流程分两段：**准备**（改代码、改版本号、写更新说明）和**发布**（打包、推送代码、上传安装包）。
+整个流程分两段：**准备**（改代码、改版本号、写更新说明、打包）和**发布**（提交推送代码、上传安装包）。
 
-### 准备（0.2.0-beta.2 已经做好）
+### 准备（0.2.0-beta.5 已经全部做好）
 
-| 要做的事 | 位置 | 0.2.0-beta.2 |
+| 要做的事 | 位置 | 0.2.0-beta.5 |
 |---|---|---|
-| 改版本号 | `package.json`、`package-lock.json`、README 里的版本徽章 | ✅ 已改 |
+| 改版本号 | `package.json`、`package-lock.json`、两个 README 里的版本徽章 | ✅ 已改 |
 | 写更新日志 | `CHANGELOG.md` 最上面 | ✅ 已写 |
-| 写发布说明（Release 页面显示的内容） | `docs/release-notes/<版本号>.md` | ✅ `docs/release-notes/0.2.0-beta.2.md` |
+| 写发布说明（Release 页面显示的内容） | `docs/release-notes/<版本号>.md` | ✅ `docs/release-notes/0.2.0-beta.5.md` |
+| 打 Mac 包（Apple 芯片 + Intel） | `npm run dist:mac` → `dist/` | ✅ 已打 |
+| 打 Windows 包（安装版 + 免安装版） | `npm run dist:win` → `release-win/` | ✅ 已打 |
+| 整理要上传的文件 | `release/` | ✅ 6 个文件已放好 |
 
 > 发布说明放在 `docs/release-notes/` 里，会跟着代码一起提交。不要放进 `release/`：那个文件夹不进 Git，而且每次打包都会清空。
 
-下一个版本改版本号可以用这条命令，它会同时改 `package.json` 和 `package-lock.json`：
+下一个版本改版本号可以用这条命令，它会同时改 `package.json` 和 `package-lock.json`（README 徽章里的版本号要手动改）：
 
 ```bash
-npm version 0.2.0-beta.3 --no-git-tag-version
+npm version 0.2.0-beta.6 --no-git-tag-version
+```
+
+自己重新打包时按这个顺序（每条单独执行）：
+
+```bash
+npm run dist:mac
+```
+
+```bash
+npm run dist:win
+```
+
+然后把 Mac 和 Windows 的安装包一起放进 `release/`，并生成两份校验文件（只拷当前版本号的文件，`dist/` 里的旧版本不会混进来）：
+
+```bash
+V=$(node -p "require('./package.json').version") && rm -rf release && mkdir release && cp dist/Noe-Agent-$V-*.dmg release/ && (cd release && shasum -a 256 *.dmg > SHA256SUMS.txt) && cp release-win/Noe-Agent-$V-* release/ && cp release-win/SHA256SUMS.txt release/SHA256SUMS-windows.txt
 ```
 
 ### 发布
@@ -154,37 +173,26 @@ npm version 0.2.0-beta.3 --no-git-tag-version
 cd "/Users/even/Desktop/Noe Agent"
 ```
 
-**第 2 步：确认依赖已安装**（换了电脑或删过 `node_modules` 才需要，平时可以跳过）
-
-```bash
-npm install
-```
-
-**第 3 步：打包**（同时打 Apple 芯片和 Intel 两个包，大约 2～5 分钟）
-
-```bash
-npm run dist:mac
-```
-
-看到最后两行是 `building block map … arm64.dmg.blockmap` 和 `… x64.dmg.blockmap`，并且没有红色的 `⨯` 报错，就是成功了。安装包在 `dist/` 文件夹里。
-
-**第 4 步：整理要上传的文件**（把两个安装包复制到 `release/`，并生成校验文件）
-
-```bash
-rm -rf release && mkdir release && cp dist/*.dmg release/ && (cd release && shasum -a 256 *.dmg > SHA256SUMS.txt)
-```
-
-检查一下，应该有 3 个文件，文件名里的版本号要是新版本：
+**第 2 步：检查要上传的文件**（应该有 6 个，文件名里的版本号是 `0.2.0-beta.5`）
 
 ```bash
 ls -lh release
 ```
 
-**第 5 步：装上自己先试一下**（推荐）
+| 文件 | 是什么 |
+|---|---|
+| `Noe-Agent-0.2.0-beta.5-mac-arm64.dmg` | Mac · Apple 芯片 |
+| `Noe-Agent-0.2.0-beta.5-mac-x64.dmg` | Mac · Intel |
+| `Noe-Agent-0.2.0-beta.5-win-x64-setup.exe` | Windows 安装版 |
+| `Noe-Agent-0.2.0-beta.5-win-x64.zip` | Windows 免安装版 |
+| `SHA256SUMS.txt` | Mac 安装包校验 |
+| `SHA256SUMS-windows.txt` | Windows 安装包校验 |
+
+**第 3 步：装上自己先试一下**（推荐）
 
 双击 `release` 里对应你芯片的 dmg，把 App 拖进「应用程序」覆盖旧版，打开用一下。没问题再发布。
 
-**第 6 步：提交代码**
+**第 4 步：提交代码**
 
 先看看有哪些改动：
 
@@ -195,34 +203,36 @@ git status
 把要发布的文件加进来。`promo/`（宣传视频工程）没有列在这里，要不要提交你自己决定：
 
 ```bash
-git add .gitignore CHANGELOG.md README.md package.json package-lock.json docs electron public server
+git add CHANGELOG.md README.md README.en.md package.json package-lock.json build docs electron public server
 ```
 
 ```bash
-git commit -m "release: 0.2.0-beta.2"
+git commit -m "release: 0.2.0-beta.5（灰白新界面、官方品牌图标、新应用图标）"
 ```
 
-**第 7 步：推送到 GitHub**
+**第 5 步：推送到 GitHub**
 
 ```bash
 git push
 ```
 
-**第 8 步：创建 Release 并上传安装包**（会同时在 GitHub 上打 `v0.2.0-beta.2` 这个 tag）
+**第 6 步：创建 Release 并上传 6 个文件**（会同时在 GitHub 上打 `v0.2.0-beta.5` 这个 tag）
 
 ```bash
-gh release create v0.2.0-beta.2 release/*.dmg release/SHA256SUMS.txt --title "Noe Agent 0.2.0-beta.2（Beta 测试版）" --notes-file docs/release-notes/0.2.0-beta.2.md --prerelease
+gh release create v0.2.0-beta.5 release/* --title "Noe Agent 0.2.0-beta.5（Beta 测试版）" --notes-file docs/release-notes/0.2.0-beta.5.md --prerelease
 ```
 
-上传两个 100 MB 左右的文件需要一点时间，命令结束后会打印 Release 页面的网址。也可以用网页操作，做法同第 3 节的方式 A，描述里粘贴 `docs/release-notes/0.2.0-beta.2.md` 的内容。
+上传四个安装包需要一点时间，命令结束后会打印 Release 页面的网址。
 
-**第 9 步：检查**
+也可以用网页操作：打开 <https://github.com/haha362636-coder/noe-agent/releases/new>，tag 填 `v0.2.0-beta.5` 并点 **Create new tag**，标题填 `Noe Agent 0.2.0-beta.5（Beta 测试版）`，描述粘贴 `docs/release-notes/0.2.0-beta.5.md` 的全部内容，把 `release` 文件夹里的 6 个文件拖进上传区，勾选 **Set as a pre-release**，等上传完成后点 **Publish release**。
+
+**第 7 步：检查**
 
 ```bash
-gh release view v0.2.0-beta.2 --web
+gh release view v0.2.0-beta.5 --web
 ```
 
-浏览器里打开 Release 页面，确认三个附件都在、标着 Pre-release。
+浏览器里打开 Release 页面，确认 6 个附件都在、标着 Pre-release，README 里的截图和新图标也能正常显示。
 
 ### 发错了怎么办
 
@@ -230,13 +240,13 @@ gh release view v0.2.0-beta.2 --web
 - **安装包传错了，要重新传**（`--clobber` 表示覆盖同名文件）：
 
   ```bash
-  gh release upload v0.2.0-beta.2 release/*.dmg release/SHA256SUMS.txt --clobber
+  gh release upload v0.2.0-beta.5 release/* --clobber
   ```
 
-- **整个 Release 不要了**（连同 tag 一起删除，然后可以从第 8 步重来）：
+- **整个 Release 不要了**（连同 tag 一起删除，然后可以从第 6 步重来）：
 
   ```bash
-  gh release delete v0.2.0-beta.2 --cleanup-tag
+  gh release delete v0.2.0-beta.5 --cleanup-tag
   ```
 
 ---

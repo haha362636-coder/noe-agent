@@ -8,7 +8,7 @@
 
 [简体中文](README.md) | English
 
-![Version](https://img.shields.io/badge/version-0.2.0--beta.4-orange)
+![Version](https://img.shields.io/badge/version-0.2.0--beta.5-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -63,10 +63,17 @@ Download from [Releases](https://github.com/haha362636-coder/noe-agent/releases)
 
 Requires Windows 10 (1809+) or Windows 11, 64-bit; Windows on ARM works through the built-in emulation. Differences from the Mac build: shortcuts use `Ctrl` (e.g. `Ctrl+K`, `Ctrl+J`), the built-in terminal defaults to PowerShell, and data lives in `C:\Users\<you>\.noe-agent`.
 
+## Screenshots
+
+| Light | Dark |
+|---|---|
+| ![Light mode](docs/screenshots/light.png) | ![Dark mode](docs/screenshots/dark.png) |
+
 ## Features
 
-- **AI Arena (new)**: give the same task to several AIs at once. Each one works in its own copy of your project, so they can't get in each other's way. Judging is blind by default (you only see "Contestant A / B / C"): compare the answers, the files they changed, time and cost side by side, with the fastest and cheapest marked for you. Identities are revealed after you pick a winner, and only the winner's changes are merged into your working folder, undoable in one click with the Time Machine. Wins add up on a leaderboard. In a group, click **Arena** under the input box or type `/arena <task>`; in a direct chat, use `/arena <task> @codex` to bring other AIs in.
-- **Multilingual (new)**: English and Simplified Chinese, switchable from the globe button or Settings. System messages, command replies and the prompts sent to AIs follow the selected language.
+- **Grey-and-white look (new)**: ink on white in light mode, off-white on graphite in dark mode; switch with one click at the bottom left, or follow the system in Settings → Appearance. Every AI and provider shows its official logo (Codex uses the Codex app icon), and each model in the model picker carries its maker's logo. Logos ship with the app and work offline.
+- **AI Arena**: give the same task to several AIs at once. Each one works in its own copy of your project, so they can't get in each other's way. Judging is blind by default (you only see "Contestant A / B / C"): compare the answers, the files they changed, time and cost side by side, with the fastest and cheapest marked for you. Identities are revealed after you pick a winner, and only the winner's changes are merged into your working folder, undoable in one click with the Time Machine. Wins add up on a leaderboard. In a group, click **Arena** under the input box or type `/arena <task>`; in a direct chat, use `/arena <task> @codex` to bring other AIs in.
+- **Multilingual**: English and Simplified Chinese, switchable from the globe button or Settings. System messages, command replies and the prompts sent to AIs follow the selected language.
 - **AI tools**: one-click install / update / uninstall for Claude Code, Codex, DeepSeek Harness, Gemini CLI, Qwen Code and OpenCode, with official sign-in status; plug in any custom CLI.
 - **Providers**: presets for Anthropic, OpenAI, DeepSeek, Zhipu GLM, Kimi, Alibaba Bailian, MiniMax, OpenRouter, SiliconFlow and Gemini, plus any compatible API; connection tests and model list fetching.
 - **One-click switching**: every AI can switch between its official sign-in and any provider API at any time (tool card, chat header, or `/use`).
@@ -118,10 +125,12 @@ server/arena.js       AI Arena: per-contestant project copies, parallel runs, di
 server/i18n.js        Server-side translations (system messages, errors, prompts sent to AIs)
 server/store.js       Data in ~/.noe-agent/data.json (local only, permission 600)
 public/               UI (plain HTML / CSS / JS)
+public/js/brands.js   Brand logos: maps AI CLIs, providers and models to official logos
+public/brand/         Official logos (SVG, from LobeHub Icons)
 public/js/i18n.js     UI translations: Chinese text is the key, falls back to Chinese if missing
 public/locales/       Language packs (en.json), shared by UI and server
 public/vendor/        Bundled marked, DOMPurify, highlight.js, xterm (rebuild with npm run build:vendor)
-build/                App icon
+build/                App icon (edit icon.svg, then run npm run make:icon to regenerate icon.png for Mac and Windows)
 ```
 
 ### Adding a language
@@ -141,7 +150,7 @@ Anything missing from a language pack falls back to Chinese, so partial translat
 
 ## Thanks
 
-Thanks to [Claude Code](https://claude.com/claude-code) and [Electron](https://www.electronjs.org).
+Thanks to [Claude Code](https://claude.com/claude-code) and [Electron](https://www.electronjs.org). Brand logos come from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT); all trademarks belong to their owners.
 
 ## Support
 

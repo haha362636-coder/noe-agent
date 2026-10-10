@@ -1,5 +1,6 @@
 // 公共工具：状态、请求、图标、头像、弹层、提示
 import { t, getLang } from './i18n.js';
+import { agentLogo, logoImg, isFull } from './brands.js';
 export { t };
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -36,14 +37,19 @@ export const agentById = (id) => S.agents.find((a) => a.id === id);
 export const providerById = (id) => S.providers.find((p) => p.id === id);
 
 export function avatar(a, size = 36) {
-  if (!a) return `<div class="avatar" style="--s:${size}px;background:#94a3b8">?</div>`;
+  if (!a) return `<div class="avatar letter" style="--s:${size}px">?</div>`;
   const busy = S.chats.some((c) => c.busy && c.members.includes(a.id));
-  return `<div class="avatar" style="--s:${size}px;--c:${a.color}">${esc(a.avatar)}${busy ? '<i class="pulse"></i>' : ''}</div>`;
+  const logo = agentLogo(a);
+  const inner = logo ? logoImg(logo) : esc(a.avatar);
+  return `<div class="avatar ${logo ? (isFull(logo) ? 'full' : '') : 'letter'}" style="--s:${size}px">${inner}${busy ? '<i class="pulse"></i>' : ''}</div>`;
 }
 export function groupAvatar(chat, size = 36) {
   const ms = chat.members.map(agentById).filter(Boolean).slice(0, 4);
-  if (!ms.length) return `<div class="avatar" style="--s:${size}px;--c:#94a3b8">${icon('users', size * 0.5)}</div>`;
-  return `<div class="avatar-grid n${ms.length}" style="--s:${size}px">${ms.map((a) => `<span style="--c:${a.color}">${esc(a.avatar)}</span>`).join('')}</div>`;
+  if (!ms.length) return `<div class="avatar letter" style="--s:${size}px">${icon('users', size * 0.5)}</div>`;
+  return `<div class="avatar-grid n${ms.length}" style="--s:${size}px">${ms.map((a) => {
+    const logo = agentLogo(a);
+    return `<span class="${logo ? (isFull(logo) ? 'full' : '') : 'letter'}">${logo ? logoImg(logo) : esc(a.avatar)}</span>`;
+  }).join('')}</div>`;
 }
 
 export function fmtTime(ts) {

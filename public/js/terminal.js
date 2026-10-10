@@ -12,8 +12,8 @@ const drawer = () => $('#term-drawer');
 function theme() {
   const dark = document.documentElement.dataset.theme === 'dark';
   return dark
-    ? { background: '#0d0e11', foreground: '#d7dae0', cursor: '#a5b4fc', selectionBackground: '#3b3f63' }
-    : { background: '#14151a', foreground: '#e3e5ea', cursor: '#a5b4fc', selectionBackground: '#3b3f63' };
+    ? { background: '#0b0b0c', foreground: '#d9d9de', cursor: '#f4f4f5', selectionBackground: '#3f3f46' }
+    : { background: '#161618', foreground: '#e4e4e7', cursor: '#f4f4f5', selectionBackground: '#3f3f46' };
 }
 
 export function initTerminals() {
